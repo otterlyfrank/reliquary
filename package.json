@@ -1,0 +1,30 @@
+{
+  "name": "reliquary",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Local-first writing archaeology — excavate gold from messy drafts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/otterlyfrank/reliquary.git"
+  },
+  "bugs": {
+    "url": "https://github.com/otterlyfrank/reliquary/issues"
+  },
+  "homepage": "https://github.com/otterlyfrank/reliquary#readme",
+  "keywords": [
+    "writing",
+    "local-first",
+    "notes",
+    "drafts",
+    "chunking",
+    "archaeology",
+    "reliquary"
+  ],
+  "scripts": {
+    "start": "python3 -m http.server 8780 --bind 127.0.0.1",
+    "serve": "python3 -m http.server 8780 --bind 127.0.0.1"
+  }
+}
+

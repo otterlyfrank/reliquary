@@ -16,6 +16,14 @@ import {
   listCollections,
   putCollection,
   deleteCollection,
+  listStoryboards,
+  getStoryboard,
+  putStoryboard,
+  deleteStoryboard,
+  addPiecesToStoryboard,
+  makeHeadingItem,
+  makeNoteItem,
+  STORYBOARD_MODES,
   DEFAULT_LABELS,
 } from './storage/db.js';
 import { parseFile, isSupportedFile, SUPPORTED_EXTENSIONS } from './ingest/parse.js';
@@ -25,6 +33,7 @@ import {
   downloadText,
   pieceToMarkdown,
   collectionToMarkdown,
+  storyboardToMarkdown,
   formatDate,
 } from './lib/export.js';
 
@@ -35,6 +44,9 @@ let state = {
   pieces: [],
   documents: [],
   collections: [],
+  storyboards: [],
+  /** @type {string | null} */
+  activeStoryboardId: null,
   filter: 'active',
   label: '',
   q: '',
@@ -70,6 +82,7 @@ async function reload() {
   }
   state.documents = await listDocuments();
   state.collections = await listCollections();
+  state.storyboards = await listStoryboards();
 }
 
 function applyTheme(theme) {
@@ -129,6 +142,7 @@ function render() {
       </div>
       <button type="button" class="nav-btn ${state.view === 'excavate' ? 'active' : ''}" data-nav="excavate">Start here</button>
       <button type="button" class="nav-btn ${state.view === 'pieces' && state.filter === 'active' ? 'active' : ''}" data-nav="pieces" data-filter="active">My pieces</button>
+      <button type="button" class="nav-btn ${state.view === 'storyboards' ? 'active' : ''}" data-nav="storyboards">Storyboards</button>
       <button type="button" class="nav-btn ${state.filter === 'starred' ? 'active' : ''}" data-nav="pieces" data-filter="starred">Starred</button>
       <button type="button" class="nav-btn ${state.filter === 'develop' ? 'active' : ''}" data-nav="pieces" data-filter="develop">Work on later</button>
       <button type="button" class="nav-btn ${state.filter === 'archive' ? 'active' : ''}" data-nav="pieces" data-filter="archive">Archive</button>
@@ -154,6 +168,7 @@ function render() {
   const actions = $('#top-actions');
   if (state.view === 'excavate') renderExcavate(viewRoot, actions);
   else if (state.view === 'pieces') renderPieces(viewRoot, actions);
+  else if (state.view === 'storyboards') renderStoryboards(viewRoot, actions);
   else if (state.view === 'collections') renderCollections(viewRoot, actions);
   else if (state.view === 'sources') renderSources(viewRoot, actions);
   else renderSettings(viewRoot, actions);
@@ -161,6 +176,13 @@ function render() {
 
 function viewTitle() {
   if (state.view === 'excavate') return 'Start here';
+  if (state.view === 'storyboards') {
+    if (state.activeStoryboardId) {
+      const b = state.storyboards.find((s) => s.id === state.activeStoryboardId);
+      return b ? b.name : 'Storyboard';
+    }
+    return 'Storyboards';
+  }
   if (state.view === 'collections') return 'Collections';
   if (state.view === 'sources') return 'Imported files';
   if (state.view === 'settings') return 'Settings';
@@ -176,6 +198,7 @@ function bindNav() {
       state.view = btn.dataset.nav;
       if (btn.dataset.filter) state.filter = btn.dataset.filter;
       if (state.view === 'pieces' && !btn.dataset.filter) state.filter = 'active';
+      if (state.view === 'storyboards' && !btn.dataset.keepBoard) state.activeStoryboardId = null;
       state.selected = new Set();
       await reload();
       render();
@@ -202,7 +225,7 @@ function renderExcavate(root, actions) {
               <ol class="how-to">
                 <li><strong>Choose files</strong> (or drag them below) — Word, text, Markdown…</li>
                 <li>We split them into small <strong>pieces</strong> you can actually read</li>
-                <li>Star the gold · park “maybe later” · archive the rest</li>
+                <li>Star the gold · send keepers to a <strong>Storyboard</strong> (outline / draft / brainstorm)</li>
               </ol>
             </div>
           </div>`
@@ -444,10 +467,11 @@ function renderPieces(root, actions) {
       state.selected.size
         ? `<div class="multi-bar">
             <span>${state.selected.size} selected</span>
+            <button type="button" class="btn primary" id="ms-board">＋ Storyboard</button>
             <button type="button" class="btn" id="ms-star">Star</button>
-            <button type="button" class="btn" id="ms-develop">Develop further</button>
+            <button type="button" class="btn" id="ms-develop">Work on later</button>
             <button type="button" class="btn" id="ms-archive">Archive</button>
-            <button type="button" class="btn primary" id="ms-ai">AI structure…</button>
+            <button type="button" class="btn" id="ms-ai">AI structure…</button>
             <button type="button" class="btn ghost" id="ms-clear">Clear selection</button>
           </div>`
         : ''
@@ -513,6 +537,11 @@ function renderPieces(root, actions) {
       const p = state.pieces.find((x) => x.id === id);
       downloadText(`reliquary-piece`, pieceToMarkdown(p), 'text/markdown');
     });
+    card.querySelector('[data-board]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = state.pieces.find((x) => x.id === id);
+      if (p) openAddToStoryboard([p]);
+    });
     card.querySelector('[data-del]')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm('Delete this piece permanently?')) return;
@@ -555,6 +584,10 @@ function renderPieces(root, actions) {
     render();
   });
   $('#ms-ai')?.addEventListener('click', () => openAiDevelop([...state.selected]));
+  $('#ms-board')?.addEventListener('click', () => {
+    const pieces = state.pieces.filter((p) => state.selected.has(p.id));
+    openAddToStoryboard(pieces);
+  });
 }
 
 function renderCard(p) {
@@ -574,7 +607,8 @@ function renderCard(p) {
         <button type="button" class="icon-btn ${p.pinned ? 'on' : ''}" data-pin title="Pin">📌</button>
         <button type="button" class="icon-btn" data-energy title="Energy">${energy}</button>
         <button type="button" class="icon-btn" data-open title="Read">Read</button>
-        <button type="button" class="icon-btn" data-develop title="Develop">✎</button>
+        <button type="button" class="icon-btn" data-board title="Add to storyboard">Board</button>
+        <button type="button" class="icon-btn" data-develop title="Work on later">✎</button>
         <button type="button" class="icon-btn" data-archive title="Archive">Archive</button>
         <button type="button" class="icon-btn" data-export title="Export">↓</button>
         <button type="button" class="icon-btn danger" data-del title="Delete">✕</button>
@@ -603,6 +637,7 @@ async function openReading(id) {
       </div>
       <div class="modal-actions">
         <button type="button" class="btn ghost" id="r-close">Close</button>
+        <button type="button" class="btn" id="r-board">＋ Storyboard</button>
         <button type="button" class="btn" id="r-export">Export MD</button>
         <button type="button" class="btn primary" id="r-save">Save</button>
       </div>
@@ -613,6 +648,10 @@ async function openReading(id) {
     if (e.target === backdrop) close();
   });
   $('#r-close', backdrop).onclick = close;
+  $('#r-board', backdrop).onclick = () => {
+    close();
+    openAddToStoryboard([p]);
+  };
   $('#r-export', backdrop).onclick = () => {
     downloadText('reliquary-piece', pieceToMarkdown(p), 'text/markdown');
   };
@@ -699,6 +738,420 @@ async function openAiDevelop(ids) {
       out.textContent = err.message || String(err);
     }
   };
+}
+
+// ── Storyboards ────────────────────────────────────────────
+
+function modeLabel(mode) {
+  return STORYBOARD_MODES.find((m) => m.id === mode)?.label || mode || 'Brainstorm';
+}
+
+function openAddToStoryboard(pieces) {
+  if (!pieces?.length) {
+    toast('No pieces selected', 'err');
+    return;
+  }
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  const boards = state.storyboards || [];
+  backdrop.innerHTML = `
+    <div class="modal" role="dialog" aria-label="Add to storyboard">
+      <h2>Add to storyboard</h2>
+      <p class="muted">${pieces.length} fragment(s) — collect them into a working draft, outline, or brainstorm.</p>
+      ${
+        boards.length
+          ? `<div class="board-pick-list">
+              ${boards
+                .map(
+                  (b) => `
+                <button type="button" class="board-pick" data-add-board="${b.id}">
+                  <strong>${esc(b.name)}</strong>
+                  <span class="dim">${esc(modeLabel(b.mode))} · ${(b.items || []).length} items</span>
+                </button>`
+                )
+                .join('')}
+            </div>`
+          : `<p class="muted">No storyboards yet — create one below.</p>`
+      }
+      <div class="field" style="margin-top:1rem">
+        <label>Or create new</label>
+        <input id="new-board-name" placeholder="e.g. Novel outline, Essay skeleton, Chaos dump…" />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select id="new-board-mode">
+          ${STORYBOARD_MODES.map((m) => `<option value="${m.id}">${esc(m.label)} — ${esc(m.hint)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="ab-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="ab-create">Create & add</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+  $('#ab-cancel', backdrop).onclick = close;
+  backdrop.querySelectorAll('[data-add-board]').forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await addPiecesToStoryboard(btn.dataset.addBoard, pieces);
+        toast(`Added to storyboard`, 'ok');
+        state.selected = new Set();
+        close();
+        await reload();
+        render();
+      } catch (err) {
+        toast(err.message || String(err), 'err');
+      }
+    };
+  });
+  $('#ab-create', backdrop).onclick = async () => {
+    const name = $('#new-board-name', backdrop).value.trim() || 'Untitled storyboard';
+    const mode = $('#new-board-mode', backdrop).value;
+    const board = await putStoryboard({ name, mode, items: [] });
+    await addPiecesToStoryboard(board.id, pieces);
+    toast(`Created “${name}” and added fragments`, 'ok');
+    state.selected = new Set();
+    close();
+    await reload();
+    state.view = 'storyboards';
+    state.activeStoryboardId = board.id;
+    render();
+  };
+}
+
+async function renderStoryboards(root, actions) {
+  if (state.activeStoryboardId) {
+    await renderStoryboardEditor(root, actions, state.activeStoryboardId);
+    return;
+  }
+
+  actions.innerHTML = `<button type="button" class="btn primary" id="btn-new-board">New storyboard</button>`;
+  $('#btn-new-board').onclick = () => openNewStoryboardDialog();
+
+  root.innerHTML = `
+    <p class="muted intro-blurb">
+      A <strong>storyboard</strong> is where chaos becomes a plan. Drop fragments you like into a brainstorm, order them into an outline, or grow a working draft — without losing the original pieces.
+    </p>
+    ${
+      state.storyboards.length
+        ? `<div class="card-grid">
+            ${state.storyboards
+              .map((b) => {
+                const n = (b.items || []).length;
+                const pieces = (b.items || []).filter((i) => i.kind === 'piece').length;
+                return `
+              <article class="piece-card board-card" data-open-board="${b.id}">
+                <div class="card-source">${esc(modeLabel(b.mode))} · updated ${formatDate(b.updatedAt)}</div>
+                <h3 class="board-title">${esc(b.name)}</h3>
+                <p class="muted" style="margin:0">${n} item${n === 1 ? '' : 's'} · ${pieces} fragment${pieces === 1 ? '' : 's'}</p>
+                ${b.notes ? `<p class="dim board-notes-preview">${esc(b.notes.slice(0, 120))}${b.notes.length > 120 ? '…' : ''}</p>` : ''}
+                <div class="piece-actions">
+                  <button type="button" class="btn primary" data-open-board="${b.id}">Open</button>
+                  <button type="button" class="btn" data-export-board="${b.id}">Export MD</button>
+                  <button type="button" class="btn danger" data-del-board="${b.id}">Delete</button>
+                </div>
+              </article>`;
+              })
+              .join('')}
+          </div>`
+        : `<div class="empty">
+            <img class="empty-art" src="./public/reliquary-otter-lego.jpg" alt="" />
+            <h3>No storyboards yet</h3>
+            <p>When you find gold in <strong>My pieces</strong>, select fragments → <strong>＋ Storyboard</strong>, or create a board here.</p>
+            <p style="margin-top:1rem"><button type="button" class="btn primary" id="btn-new-board-2">Create storyboard</button></p>
+          </div>`
+    }
+  `;
+
+  $('#btn-new-board-2')?.addEventListener('click', () => openNewStoryboardDialog());
+  root.querySelectorAll('[data-open-board]').forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      state.activeStoryboardId = el.dataset.openBoard;
+      render();
+    };
+  });
+  root.querySelectorAll('[data-export-board]').forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const board = await getStoryboard(btn.dataset.exportBoard);
+      if (!board) return;
+      downloadText(`reliquary-${board.name}`, storyboardToMarkdown(board), 'text/markdown');
+      toast('Exported storyboard', 'ok');
+    };
+  });
+  root.querySelectorAll('[data-del-board]').forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this storyboard? Original pieces stay safe.')) return;
+      await deleteStoryboard(btn.dataset.delBoard);
+      await reload();
+      render();
+    };
+  });
+}
+
+function openNewStoryboardDialog() {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal" role="dialog">
+      <h2>New storyboard</h2>
+      <p class="muted">Organize fragments into a brainstorm, outline, or working draft.</p>
+      <div class="field">
+        <label>Name</label>
+        <input id="nb-name" placeholder="e.g. Chapter 3 outline" autofocus />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select id="nb-mode">
+          ${STORYBOARD_MODES.map((m) => `<option value="${m.id}">${esc(m.label)} — ${esc(m.hint)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="nb-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="nb-go">Create</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+  $('#nb-cancel', backdrop).onclick = close;
+  const create = async () => {
+    const name = $('#nb-name', backdrop).value.trim() || 'Untitled storyboard';
+    const mode = $('#nb-mode', backdrop).value;
+    const board = await putStoryboard({ name, mode, items: [] });
+    close();
+    await reload();
+    state.activeStoryboardId = board.id;
+    state.view = 'storyboards';
+    render();
+  };
+  $('#nb-go', backdrop).onclick = create;
+  $('#nb-name', backdrop).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') create();
+  });
+}
+
+async function renderStoryboardEditor(root, actions, boardId) {
+  let board = await getStoryboard(boardId);
+  if (!board) {
+    state.activeStoryboardId = null;
+    await reload();
+    render();
+    return;
+  }
+
+  actions.innerHTML = `
+    <button type="button" class="btn" id="sb-back">← All storyboards</button>
+    <button type="button" class="btn" id="sb-export">Export MD</button>
+    <button type="button" class="btn primary" id="sb-save">Save</button>
+  `;
+
+  const items = board.items || [];
+  root.innerHTML = `
+    <div class="sb-header">
+      <div class="field sb-name-field">
+        <label>Title</label>
+        <input id="sb-name" value="${esc(board.name)}" />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select id="sb-mode">
+          ${STORYBOARD_MODES.map(
+            (m) =>
+              `<option value="${m.id}" ${board.mode === m.id ? 'selected' : ''}>${esc(m.label)}</option>`
+          ).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Working notes (yours — not from fragments)</label>
+      <textarea id="sb-notes" rows="3" placeholder="Thesis, questions, tone, what this board is trying to become…">${esc(board.notes || '')}</textarea>
+    </div>
+    <div class="sb-toolbar">
+      <button type="button" class="btn" id="sb-add-heading">＋ Section heading</button>
+      <button type="button" class="btn" id="sb-add-note">＋ Free note</button>
+      <button type="button" class="btn" id="sb-add-pieces">＋ From My pieces</button>
+      <span class="dim">${items.length} item${items.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="sb-lane" id="sb-lane">
+      ${
+        items.length
+          ? items
+              .map((item, idx) => renderStoryboardItem(item, idx, items.length))
+              .join('')
+          : `<div class="empty sb-empty">
+              <h3>Empty board</h3>
+              <p>Add fragments from <strong>My pieces</strong> (Board button or multi-select), or drop a section heading to start an outline.</p>
+            </div>`
+      }
+    </div>
+  `;
+
+  const readForm = () => ({
+    name: $('#sb-name').value.trim() || 'Untitled storyboard',
+    mode: $('#sb-mode').value,
+    notes: $('#sb-notes').value,
+  });
+
+  const persist = async (nextItems = items) => {
+    const form = readForm();
+    board = await putStoryboard({
+      ...board,
+      ...form,
+      items: nextItems,
+    });
+    await reload();
+    return board;
+  };
+
+  $('#sb-back').onclick = async () => {
+    await persist(items);
+    state.activeStoryboardId = null;
+    await reload();
+    render();
+  };
+  $('#sb-save').onclick = async () => {
+    // re-read item texts from DOM
+    const next = collectItemsFromDom(board.items || []);
+    await persist(next);
+    toast('Storyboard saved', 'ok');
+    board = await getStoryboard(boardId);
+    render();
+  };
+  $('#sb-export').onclick = async () => {
+    const next = collectItemsFromDom(board.items || []);
+    const saved = await persist(next);
+    downloadText(`reliquary-${saved.name}`, storyboardToMarkdown(saved), 'text/markdown');
+    toast('Exported Markdown', 'ok');
+  };
+  $('#sb-add-heading').onclick = async () => {
+    const title = prompt('Section heading:', 'Act / Chapter / Beat');
+    if (title === null) return;
+    const next = collectItemsFromDom(board.items || []);
+    next.push(makeHeadingItem(title.trim() || 'Section'));
+    await persist(next);
+    render();
+  };
+  $('#sb-add-note').onclick = async () => {
+    const next = collectItemsFromDom(board.items || []);
+    next.push(makeNoteItem('Your note…'));
+    await persist(next);
+    render();
+  };
+  $('#sb-add-pieces').onclick = () => {
+    state.view = 'pieces';
+    state.filter = 'active';
+    state.activeStoryboardId = boardId; // remember which board to return? optional
+    // Keep active id so picker can default? We'll just go to pieces
+    toast('Select fragments → ＋ Storyboard', 'ok');
+    render();
+  };
+
+  bindStoryboardItemActions(board, persist, () => collectItemsFromDom(board.items || []));
+}
+
+function collectItemsFromDom(fallbackItems) {
+  const lane = $('#sb-lane');
+  if (!lane) return fallbackItems;
+  const cards = [...lane.querySelectorAll('.sb-item')];
+  if (!cards.length) return fallbackItems;
+  return cards.map((el) => {
+    const id = el.dataset.itemId;
+    const kind = el.dataset.kind;
+    const base = fallbackItems.find((i) => i.id === id) || { id, kind };
+    if (kind === 'heading') {
+      const text = el.querySelector('[data-item-text]')?.value ?? base.text;
+      return { ...base, kind: 'heading', text };
+    }
+    if (kind === 'note') {
+      const text = el.querySelector('[data-item-text]')?.value ?? base.text;
+      return { ...base, kind: 'note', text };
+    }
+    // piece: optional edit
+    const text = el.querySelector('[data-item-text]')?.value ?? base.text;
+    return { ...base, kind: 'piece', text };
+  });
+}
+
+function renderStoryboardItem(item, idx, total) {
+  if (item.kind === 'heading') {
+    return `
+      <div class="sb-item sb-heading" data-item-id="${item.id}" data-kind="heading">
+        <div class="sb-item-rail">
+          <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
+        </div>
+        <div class="sb-item-body">
+          <span class="sb-kind-pill">Section</span>
+          <input class="sb-heading-input" data-item-text value="${esc(item.text || '')}" />
+        </div>
+      </div>`;
+  }
+  if (item.kind === 'note') {
+    return `
+      <div class="sb-item sb-note" data-item-id="${item.id}" data-kind="note">
+        <div class="sb-item-rail">
+          <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
+        </div>
+        <div class="sb-item-body">
+          <span class="sb-kind-pill">Note</span>
+          <textarea data-item-text rows="2">${esc(item.text || '')}</textarea>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="sb-item sb-piece" data-item-id="${item.id}" data-kind="piece">
+      <div class="sb-item-rail">
+        <span class="sb-idx">${idx + 1}</span>
+        <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
+        <button type="button" class="icon-btn danger" data-remove title="Remove from board">✕</button>
+      </div>
+      <div class="sb-item-body">
+        <div class="card-source">${esc(item.sourceName || 'Fragment')}${(item.labels || []).length ? ' · ' + (item.labels || []).map(esc).join(', ') : ''}</div>
+        <textarea data-item-text rows="4" class="sb-piece-text">${esc(item.text || '')}</textarea>
+      </div>
+    </div>`;
+}
+
+function bindStoryboardItemActions(board, persist, getItems) {
+  const lane = $('#sb-lane');
+  if (!lane) return;
+
+  const move = async (id, dir) => {
+    const items = getItems();
+    const i = items.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const j = i + dir;
+    if (j < 0 || j >= items.length) return;
+    const next = [...items];
+    [next[i], next[j]] = [next[j], next[i]];
+    await persist(next);
+    render();
+  };
+
+  lane.querySelectorAll('.sb-item').forEach((el) => {
+    const id = el.dataset.itemId;
+    el.querySelector('[data-up]')?.addEventListener('click', () => move(id, -1));
+    el.querySelector('[data-down]')?.addEventListener('click', () => move(id, 1));
+    el.querySelector('[data-remove]')?.addEventListener('click', async () => {
+      const items = getItems().filter((x) => x.id !== id);
+      await persist(items);
+      toast('Removed from board (piece still in vault)', 'ok');
+      render();
+    });
+  });
 }
 
 // ── Collections ────────────────────────────────────────────

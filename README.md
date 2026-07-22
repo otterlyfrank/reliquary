@@ -77,9 +77,10 @@ Then open **http://127.0.0.1:8780**.
 | **Optional AI chunk** | If you configure an LLM, import can refine boundaries (off by default) |
 | **Labels** | Configurable multi-label taxonomy (defaults included) + free tags |
 | **Cards** | Readable, star / pin / energy / develop / archive / export · large cards for long passages |
-| **Develop queue** | Send fragments to a “Develop further” shelf |
+| **Develop queue** | Send fragments to a “Work on later” shelf |
+| **Storyboards** | Collect fragments into a **brainstorm**, **outline**, or **working draft** — reorder, section headings, free notes, export Markdown |
 | **Multi-select + AI** | Structural suggestions (story / essay / poem / chapter) via optional LLM |
-| **Export** | Per-piece or whole view as Markdown |
+| **Export** | Per-piece, views, or full storyboard as Markdown |
 | **Local-first** | IndexedDB only · no account · no cloud required |
 
 ---

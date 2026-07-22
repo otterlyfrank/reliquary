@@ -43,41 +43,126 @@ export const DEFAULT_SETTINGS = {
   supportNote: 'Reliquary is free and open source. Support keeps the vault open.',
 };
 
-function openDb() {
+function ensureStores(db) {
+  if (!db.objectStoreNames.contains('documents')) {
+    const d = db.createObjectStore('documents', { keyPath: 'id' });
+    d.createIndex('importedAt', 'importedAt', { unique: false });
+  }
+  if (!db.objectStoreNames.contains('pieces')) {
+    const p = db.createObjectStore('pieces', { keyPath: 'id' });
+    p.createIndex('documentId', 'documentId', { unique: false });
+    p.createIndex('status', 'status', { unique: false });
+    p.createIndex('starred', 'starred', { unique: false });
+    p.createIndex('updatedAt', 'updatedAt', { unique: false });
+  }
+  if (!db.objectStoreNames.contains('collections')) {
+    db.createObjectStore('collections', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('settings')) {
+    db.createObjectStore('settings', { keyPath: 'key' });
+  }
+  if (!db.objectStoreNames.contains('storyboards')) {
+    const s = db.createObjectStore('storyboards', { keyPath: 'id' });
+    s.createIndex('updatedAt', 'updatedAt', { unique: false });
+    s.createIndex('mode', 'mode', { unique: false });
+  }
+}
+
+/**
+ * Open IndexedDB with upgrade + blocked handling.
+ * Stuck “Opening vault” is usually another Reliquary tab holding the old DB.
+ */
+export function openDb() {
   if (dbInstance) return Promise.resolve(dbInstance);
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => {
-      dbInstance = req.result;
-      resolve(dbInstance);
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err instanceof Error ? err : new Error(String(err || 'IndexedDB open failed')));
+    };
+    const ok = (db) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      dbInstance = db;
+      db.onversionchange = () => {
+        try {
+          db.close();
+        } catch {
+          /* ignore */
+        }
+        dbInstance = null;
+      };
+      resolve(db);
+    };
+
+    const timer = setTimeout(() => {
+      fail(
+        new Error(
+          'Vault is taking too long to open. Close other Reliquary tabs, then hard-refresh (Cmd+Shift+R).'
+        )
+      );
+    }, 8000);
+
+    let req;
+    try {
+      req = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch (err) {
+      fail(err);
+      return;
+    }
+
+    req.onerror = () => fail(req.error || new Error('IndexedDB error'));
+    req.onblocked = () => {
+      // keep waiting — timeout will surface a clear message
+      console.warn('[Reliquary] IndexedDB upgrade blocked — close other tabs.');
     };
     req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('documents')) {
-        const d = db.createObjectStore('documents', { keyPath: 'id' });
-        d.createIndex('importedAt', 'importedAt', { unique: false });
-      }
-      if (!db.objectStoreNames.contains('pieces')) {
-        const p = db.createObjectStore('pieces', { keyPath: 'id' });
-        p.createIndex('documentId', 'documentId', { unique: false });
-        p.createIndex('status', 'status', { unique: false });
-        p.createIndex('starred', 'starred', { unique: false });
-        p.createIndex('updatedAt', 'updatedAt', { unique: false });
-      }
-      if (!db.objectStoreNames.contains('collections')) {
-        db.createObjectStore('collections', { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('settings')) {
-        db.createObjectStore('settings', { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains('storyboards')) {
-        const s = db.createObjectStore('storyboards', { keyPath: 'id' });
-        s.createIndex('updatedAt', 'updatedAt', { unique: false });
-        s.createIndex('mode', 'mode', { unique: false });
+      try {
+        ensureStores(e.target.result);
+      } catch (err) {
+        fail(err);
       }
     };
+    req.onsuccess = () => {
+      const db = req.result;
+      // Self-heal: if a partial DB is missing storyboards, bump via delete+reopen is too harsh;
+      // ensureStores only runs on upgrade. If somehow missing, recreate connection at higher version.
+      if (!db.objectStoreNames.contains('storyboards')) {
+        db.close();
+        dbInstance = null;
+        const bump = indexedDB.open(DB_NAME, DB_VERSION + 1);
+        bump.onupgradeneeded = (e) => {
+          try {
+            ensureStores(e.target.result);
+          } catch (err) {
+            fail(err);
+          }
+        };
+        bump.onerror = () => fail(bump.error || new Error('IndexedDB upgrade failed'));
+        bump.onblocked = () => {
+          console.warn('[Reliquary] IndexedDB bump blocked — close other tabs.');
+        };
+        bump.onsuccess = () => ok(bump.result);
+        return;
+      }
+      ok(db);
+    };
   });
+}
+
+/** Close and forget cached connection (for recovery / tests). */
+export function closeDb() {
+  if (dbInstance) {
+    try {
+      dbInstance.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  dbInstance = null;
 }
 
 function tx(names, mode = 'readonly') {
@@ -304,9 +389,14 @@ export async function getStoryboard(id) {
 }
 
 export async function listStoryboards() {
-  const t = await tx(['storyboards']);
-  const all = await reqP(t.objectStore('storyboards').getAll());
-  return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  try {
+    const t = await tx(['storyboards']);
+    const all = await reqP(t.objectStore('storyboards').getAll());
+    return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  } catch (err) {
+    console.warn('[Reliquary] listStoryboards', err);
+    return [];
+  }
 }
 
 export async function deleteStoryboard(id) {
@@ -381,4 +471,4 @@ export async function setSettings(partial) {
   return getSettings();
 }
 
-export { openDb, uuid, DEFAULT_LABELS };
+export { uuid, DEFAULT_LABELS };

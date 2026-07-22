@@ -58,10 +58,15 @@ let rootEl = null;
 
 export async function mountApp(root) {
   rootEl = root;
-  state.settings = await getSettings();
-  applyTheme(state.settings.theme);
-  await reload();
-  render();
+  try {
+    state.settings = await getSettings();
+    applyTheme(state.settings.theme);
+    await reload();
+    render();
+  } catch (err) {
+    console.error('[Reliquary] mount failed', err);
+    throw err;
+  }
 }
 
 async function reload() {

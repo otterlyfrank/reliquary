@@ -6,3 +6,9 @@ node_modules/
 .env
 .env.*
 __pycache__/
+src-tauri/target/
+dist/
+*.dmg
+*.AppImage
+*.msi
+*.exe

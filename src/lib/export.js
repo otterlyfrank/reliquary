@@ -29,6 +29,50 @@ export function collectionToMarkdown(name, pieces) {
   return `# ${name}\n\n_Exported from Reliquary_\n\n${body}`;
 }
 
+/**
+ * Export a storyboard as a working Markdown draft / outline / brainstorm.
+ * @param {{ name: string, mode?: string, notes?: string, items?: any[] }} board
+ */
+export function storyboardToMarkdown(board) {
+  const mode = board.mode || 'brainstorm';
+  const modeLabel =
+    mode === 'draft' ? 'Working draft' : mode === 'outline' ? 'Outline' : 'Brainstorm';
+  const lines = [
+    `# ${board.name || 'Storyboard'}`,
+    '',
+    `_Reliquary ${modeLabel} · ${new Date().toLocaleDateString()}_`,
+    '',
+  ];
+  if (board.notes?.trim()) {
+    lines.push('## Working notes', '', board.notes.trim(), '', '---', '');
+  }
+
+  const items = board.items || [];
+  let pieceNum = 0;
+  for (const item of items) {
+    if (item.kind === 'heading') {
+      lines.push(`## ${item.text || 'Section'}`, '');
+      continue;
+    }
+    if (item.kind === 'note') {
+      lines.push(`> ${((item.text || '').trim() || '_empty note_').replace(/\n/g, '\n> ')}`, '');
+      continue;
+    }
+    // piece
+    pieceNum += 1;
+    const src = item.sourceName ? ` · from *${item.sourceName}*` : '';
+    if (mode === 'draft') {
+      lines.push(item.text || '', '', '---', '');
+    } else if (mode === 'outline') {
+      const labels = (item.labels || []).length ? ` (${(item.labels || []).join(', ')})` : '';
+      lines.push(`${pieceNum}. **Beat${labels}**${src}`, '', item.text || '', '');
+    } else {
+      lines.push(`- **Fragment ${pieceNum}**${src}`, '', `  ${((item.text || '').replace(/\n/g, '\n  '))}`, '');
+    }
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 export function formatDate(ts) {
   if (!ts) return '—';
   try {

@@ -3,7 +3,15 @@
  */
 
 const DB_NAME = 'reliquary';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+
+/** @typedef {'brainstorm' | 'outline' | 'draft'} StoryboardMode */
+
+export const STORYBOARD_MODES = [
+  { id: 'brainstorm', label: 'Brainstorm', hint: 'Loose shelf — dump gold, sort later' },
+  { id: 'outline', label: 'Outline', hint: 'Ordered beats, headings, structure' },
+  { id: 'draft', label: 'Working draft', hint: 'Toward a continuous read' },
+];
 
 /** @type {IDBDatabase | null} */
 let dbInstance = null;
@@ -62,6 +70,11 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains('settings')) {
         db.createObjectStore('settings', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('storyboards')) {
+        const s = db.createObjectStore('storyboards', { keyPath: 'id' });
+        s.createIndex('updatedAt', 'updatedAt', { unique: false });
+        s.createIndex('mode', 'mode', { unique: false });
       }
     };
   });
@@ -259,6 +272,94 @@ export async function deleteCollection(id) {
   }
   const t = await tx(['collections'], 'readwrite');
   await reqP(t.objectStore('collections').delete(id));
+}
+
+// ── Storyboards (working drafts / outlines / brainstorms) ──
+
+/**
+ * Ordered workspace: pieces (snapshots) + headings + free notes.
+ * kind on items: 'piece' | 'heading' | 'note'
+ * mode on board: brainstorm | outline | draft
+ */
+export async function putStoryboard(board) {
+  const now = Date.now();
+  const mode = ['brainstorm', 'outline', 'draft'].includes(board.mode) ? board.mode : 'brainstorm';
+  const record = {
+    id: board.id || uuid(),
+    name: (board.name || 'Untitled storyboard').trim() || 'Untitled storyboard',
+    mode,
+    notes: board.notes || '',
+    items: Array.isArray(board.items) ? board.items : [],
+    createdAt: board.createdAt || now,
+    updatedAt: now,
+  };
+  const t = await tx(['storyboards'], 'readwrite');
+  await reqP(t.objectStore('storyboards').put(record));
+  return record;
+}
+
+export async function getStoryboard(id) {
+  const t = await tx(['storyboards']);
+  return reqP(t.objectStore('storyboards').get(id));
+}
+
+export async function listStoryboards() {
+  const t = await tx(['storyboards']);
+  const all = await reqP(t.objectStore('storyboards').getAll());
+  return all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+export async function deleteStoryboard(id) {
+  const t = await tx(['storyboards'], 'readwrite');
+  await reqP(t.objectStore('storyboards').delete(id));
+}
+
+/** Snapshot a piece onto a board (keeps board stable if source piece later changes). */
+export function pieceToBoardItem(piece) {
+  return {
+    id: uuid(),
+    kind: 'piece',
+    pieceId: piece.id,
+    text: piece.text || '',
+    sourceName: piece.sourceName || '',
+    labels: piece.labels || [],
+    tags: piece.tags || [],
+    energy: piece.energy || 0,
+  };
+}
+
+export function makeHeadingItem(title = 'Section') {
+  return { id: uuid(), kind: 'heading', text: title };
+}
+
+export function makeNoteItem(text = '') {
+  return { id: uuid(), kind: 'note', text };
+}
+
+export async function addPiecesToStoryboard(boardId, pieces) {
+  const board = await getStoryboard(boardId);
+  if (!board) throw new Error('Storyboard not found');
+  const existingIds = new Set(
+    (board.items || []).filter((i) => i.kind === 'piece' && i.pieceId).map((i) => i.pieceId)
+  );
+  const toAdd = [];
+  for (const p of pieces) {
+    if (!p?.id) continue;
+    if (existingIds.has(p.id)) continue;
+    toAdd.push(pieceToBoardItem(p));
+    existingIds.add(p.id);
+  }
+  if (!toAdd.length) return board;
+  return putStoryboard({
+    ...board,
+    items: [...(board.items || []), ...toAdd],
+  });
+}
+
+export async function updateStoryboardItems(boardId, items) {
+  const board = await getStoryboard(boardId);
+  if (!board) throw new Error('Storyboard not found');
+  return putStoryboard({ ...board, items });
 }
 
 // ── Settings ───────────────────────────────────────────────

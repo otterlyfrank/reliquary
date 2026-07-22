@@ -506,6 +506,60 @@ select {
   margin: 0 0 0.35rem;
 }
 
+.import-tips {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.1rem;
+  max-width: 42rem;
+}
+
+.import-tips h4 {
+  font-family: var(--serif);
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.import-tips ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.import-tips li {
+  margin-bottom: 0.3rem;
+}
+
+.import-progress {
+  margin: 0 0 1rem;
+  max-width: 36rem;
+}
+
+.import-progress-bar {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 0.4rem;
+}
+
+.import-progress-bar > div {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.2s ease;
+}
+
+.import-progress p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
 /* Empty */
 .empty {
   text-align: center;

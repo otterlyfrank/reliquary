@@ -64,7 +64,17 @@ Then open **http://127.0.0.1:8780**.
 
 > **Why a tiny server?** Browsers block some features when you open `index.html` as a raw file. Serving locally keeps everything private on your machine — nothing is uploaded.
 
-**Native .exe / .dmg installers** are planned (Tauri) so derpy-friendly writers never see Terminal. For now the start scripts are the easy path.
+### Desktop installers (.dmg / .exe)
+
+Reliquary includes a **Tauri** desktop shell (`src-tauri/`). Installers are built on GitHub Actions (no need for Rust on your laptop for CI builds).
+
+| Path | How |
+|------|-----|
+| **Browser (easiest)** | `./start.sh` or `start.bat` → http://127.0.0.1:8780 |
+| **Local desktop build** | Install [Rust](https://rustup.rs) + `npm install` then `npm run desktop:build` |
+| **CI installers** | Push a tag `v1.0.1` or run **Actions → Desktop installers → Run workflow** |
+
+Draft GitHub Releases will attach platform bundles when the workflow succeeds.
 
 ---
 
@@ -78,7 +88,8 @@ Then open **http://127.0.0.1:8780**.
 | **Labels** | Configurable multi-label taxonomy (defaults included) + free tags |
 | **Cards** | Readable, star / pin / energy / develop / archive / export · large cards for long passages |
 | **Develop queue** | Send fragments to a “Work on later” shelf |
-| **Storyboards** | Collect fragments into a **brainstorm**, **outline**, or **working draft** — reorder, section headings, free notes, export Markdown |
+| **Storyboards** | Collect fragments into a **brainstorm**, **outline**, or **working draft** — **drag to reorder**, dense/roomy mode, section headings, free notes, export Markdown |
+| **Cards** | Compact/comfortable density · multi-select bulk label/tag/star/archive/export · quick label chips · reading prev/next |
 | **Multi-select + AI** | Structural suggestions (story / essay / poem / chapter) via optional LLM |
 | **Export** | Per-piece, views, or full storyboard as Markdown |
 | **Local-first** | IndexedDB only · no account · no cloud required |

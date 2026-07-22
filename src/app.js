@@ -52,11 +52,15 @@ let state = {
   storyboards: [],
   /** @type {string | null} */
   activeStoryboardId: null,
+  /** Compact storyboard cards */
+  sbDense: true,
   filter: 'active',
   label: '',
   q: '',
   selected: new Set(),
   busy: false,
+  /** Card density: comfortable | compact */
+  cardDensity: 'comfortable',
 };
 
 let rootEl = null;
@@ -538,7 +542,10 @@ async function ingestFiles(files) {
 
 function renderPieces(root, actions) {
   const labels = state.settings.labels || DEFAULT_LABELS;
+  const dense = state.cardDensity === 'compact';
   actions.innerHTML = `
+    <button type="button" class="btn" id="btn-density">${dense ? 'Comfortable cards' : 'Compact cards'}</button>
+    <button type="button" class="btn" id="btn-select-all" ${!state.pieces.length ? 'disabled' : ''}>Select all</button>
     <button type="button" class="btn" id="btn-export-view" ${!state.pieces.length ? 'disabled' : ''}>Export view</button>
     <button type="button" class="btn primary" id="btn-import-more">Import more</button>
   `;
@@ -551,13 +558,22 @@ function renderPieces(root, actions) {
     downloadText(`reliquary-${state.filter || 'pieces'}`, md, 'text/markdown');
     toast('Exported Markdown', 'ok');
   };
+  $('#btn-density').onclick = () => {
+    state.cardDensity = dense ? 'comfortable' : 'compact';
+    render();
+  };
+  $('#btn-select-all').onclick = () => {
+    if (state.selected.size === state.pieces.length) state.selected = new Set();
+    else state.selected = new Set(state.pieces.map((p) => p.id));
+    render();
+  };
 
   root.innerHTML = `
     <div class="filter-row">
       <input class="search" id="q" placeholder="Search pieces…" value="${esc(state.q)}" />
       <button type="button" class="chip ${!state.label ? 'active' : ''}" data-label="">All labels</button>
       ${labels
-        .slice(0, 12)
+        .slice(0, 14)
         .map(
           (l) =>
             `<button type="button" class="chip ${state.label === l ? 'active' : ''}" data-label="${esc(l)}">${esc(l)}</button>`
@@ -567,11 +583,12 @@ function renderPieces(root, actions) {
     <div class="stats">
       <span>${state.pieces.length} shown</span>
       <span>${state.selected.size} selected</span>
+      <span class="dim">${dense ? 'compact' : 'comfortable'}</span>
     </div>
     ${
       state.pieces.length
-        ? `<div class="card-grid" id="grid">
-            ${state.pieces.map((p) => renderCard(p)).join('')}
+        ? `<div class="card-grid ${dense ? 'compact' : ''}" id="grid">
+            ${state.pieces.map((p) => renderCard(p, dense)).join('')}
           </div>`
         : `<div class="empty">
             <img class="empty-art" src="./public/reliquary-otter-lego.jpg" alt="" />
@@ -584,11 +601,16 @@ function renderPieces(root, actions) {
         ? `<div class="multi-bar">
             <span>${state.selected.size} selected</span>
             <button type="button" class="btn primary" id="ms-board">＋ Storyboard</button>
+            <button type="button" class="btn" id="ms-label">＋ Label</button>
+            <button type="button" class="btn" id="ms-tag">＋ Tag</button>
             <button type="button" class="btn" id="ms-star">Star</button>
+            <button type="button" class="btn" id="ms-unstar">Unstar</button>
             <button type="button" class="btn" id="ms-develop">Work on later</button>
+            <button type="button" class="btn" id="ms-active">Restore active</button>
             <button type="button" class="btn" id="ms-archive">Archive</button>
+            <button type="button" class="btn" id="ms-export">Export MD</button>
             <button type="button" class="btn" id="ms-ai">AI structure…</button>
-            <button type="button" class="btn ghost" id="ms-clear">Clear selection</button>
+            <button type="button" class="btn ghost" id="ms-clear">Clear</button>
           </div>`
         : ''
     }
@@ -617,6 +639,10 @@ function renderPieces(root, actions) {
       else state.selected.add(id);
       render();
     });
+    card.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, label, input, a')) return;
+      openReading(id);
+    });
     card.querySelector('[data-star]')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       const p = state.pieces.find((x) => x.id === id);
@@ -634,7 +660,7 @@ function renderPieces(root, actions) {
     card.querySelector('[data-develop]')?.addEventListener('click', async (e) => {
       e.stopPropagation();
       await updatePiece(id, { status: 'develop' });
-      toast('Sent to Develop further', 'ok');
+      toast('Sent to Work on later', 'ok');
       await reload();
       render();
     });
@@ -657,6 +683,18 @@ function renderPieces(root, actions) {
       e.stopPropagation();
       const p = state.pieces.find((x) => x.id === id);
       if (p) openAddToStoryboard([p]);
+    });
+    card.querySelector('[data-quick-label]')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const lab = e.currentTarget.dataset.quickLabel;
+      const p = state.pieces.find((x) => x.id === id);
+      if (!p || !lab) return;
+      const set = new Set(p.labels || []);
+      if (set.has(lab)) set.delete(lab);
+      else set.add(lab);
+      await updatePiece(id, { labels: [...set] });
+      await reload();
+      render();
     });
     card.querySelector('[data-del]')?.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -686,9 +724,22 @@ function renderPieces(root, actions) {
     await reload();
     render();
   });
+  $('#ms-unstar')?.addEventListener('click', async () => {
+    for (const id of state.selected) await updatePiece(id, { starred: false });
+    toast('Unstarred', 'ok');
+    await reload();
+    render();
+  });
   $('#ms-develop')?.addEventListener('click', async () => {
     for (const id of state.selected) await updatePiece(id, { status: 'develop' });
-    toast('Queued for development', 'ok');
+    toast('Queued for later', 'ok');
+    state.selected = new Set();
+    await reload();
+    render();
+  });
+  $('#ms-active')?.addEventListener('click', async () => {
+    for (const id of state.selected) await updatePiece(id, { status: 'active' });
+    toast('Restored to active', 'ok');
     state.selected = new Set();
     await reload();
     render();
@@ -699,6 +750,47 @@ function renderPieces(root, actions) {
     await reload();
     render();
   });
+  $('#ms-export')?.addEventListener('click', () => {
+    const pieces = state.pieces.filter((p) => state.selected.has(p.id));
+    downloadText('reliquary-selection', collectionToMarkdown('Selection', pieces), 'text/markdown');
+    toast('Exported selection', 'ok');
+  });
+  $('#ms-label')?.addEventListener('click', async () => {
+    const lab = prompt('Label to add (must match or create via Settings later):', labels[0] || 'Concept');
+    if (!lab?.trim()) return;
+    const name = lab.trim();
+    for (const id of state.selected) {
+      const p = await listPieces({}).then((all) => all.find((x) => x.id === id));
+      if (!p) continue;
+      const set = new Set(p.labels || []);
+      set.add(name);
+      await updatePiece(id, { labels: [...set] });
+    }
+    // ensure label in settings taxonomy
+    if (!(state.settings.labels || []).includes(name)) {
+      state.settings = await setSettings({
+        labels: [...(state.settings.labels || DEFAULT_LABELS), name],
+      });
+    }
+    toast(`Labeled “${name}”`, 'ok');
+    await reload();
+    render();
+  });
+  $('#ms-tag')?.addEventListener('click', async () => {
+    const tag = prompt('Tag to add (no # needed):', '');
+    if (!tag?.trim()) return;
+    const name = tag.trim().replace(/^#/, '');
+    for (const id of state.selected) {
+      const p = state.pieces.find((x) => x.id === id);
+      if (!p) continue;
+      const set = new Set(p.tags || []);
+      set.add(name);
+      await updatePiece(id, { tags: [...set] });
+    }
+    toast(`Tagged #${name}`, 'ok');
+    await reload();
+    render();
+  });
   $('#ms-ai')?.addEventListener('click', () => openAiDevelop([...state.selected]));
   $('#ms-board')?.addEventListener('click', () => {
     const pieces = state.pieces.filter((p) => state.selected.has(p.id));
@@ -706,23 +798,35 @@ function renderPieces(root, actions) {
   });
 }
 
-function renderCard(p) {
+function renderCard(p, dense = false) {
   const selected = state.selected.has(p.id);
   const energy = '★'.repeat(p.energy || 0) + '☆'.repeat(3 - (p.energy || 0));
+  const preview = dense
+    ? esc((p.text || '').slice(0, 220)) + ((p.text || '').length > 220 ? '…' : '')
+    : esc(p.text);
+  const quickLabels = (state.settings.labels || DEFAULT_LABELS).slice(0, dense ? 4 : 6);
   return `
-    <article class="piece-card ${p.isLarge ? 'large' : ''} ${selected ? 'selected' : ''}" data-id="${p.id}">
+    <article class="piece-card ${p.isLarge && !dense ? 'large' : ''} ${dense ? 'dense' : ''} ${selected ? 'selected' : ''}" data-id="${p.id}">
       <label class="select-box"><input type="checkbox" data-select ${selected ? 'checked' : ''} /></label>
-      <div class="card-source">${esc(p.sourceName || '—')} · ${formatDate(p.updatedAt)}</div>
-      <p class="piece-text">${esc(p.text)}</p>
+      <div class="card-source">${esc(p.sourceName || '—')} · ${formatDate(p.updatedAt)}${p.starred ? ' · ★' : ''}${p.pinned ? ' · 📌' : ''}</div>
+      <p class="piece-text">${preview}</p>
       <div class="piece-meta">
         ${(p.labels || []).map((l) => `<span class="label-pill">${esc(l)}</span>`).join('')}
         ${(p.tags || []).map((t) => `<span class="tag-pill">#${esc(t)}</span>`).join('')}
+      </div>
+      <div class="quick-labels">
+        ${quickLabels
+          .map((l) => {
+            const on = (p.labels || []).includes(l);
+            return `<button type="button" class="chip micro ${on ? 'active' : ''}" data-quick-label="${esc(l)}">${esc(l)}</button>`;
+          })
+          .join('')}
       </div>
       <div class="piece-actions">
         <button type="button" class="icon-btn ${p.starred ? 'on' : ''}" data-star title="Star">★</button>
         <button type="button" class="icon-btn ${p.pinned ? 'on' : ''}" data-pin title="Pin">📌</button>
         <button type="button" class="icon-btn" data-energy title="Energy">${energy}</button>
-        <button type="button" class="icon-btn" data-open title="Read">Read</button>
+        <button type="button" class="icon-btn" data-open title="Read (or double-click card)">Read</button>
         <button type="button" class="icon-btn" data-board title="Add to storyboard">Board</button>
         <button type="button" class="icon-btn" data-develop title="Work on later">✎</button>
         <button type="button" class="icon-btn" data-archive title="Archive">Archive</button>
@@ -734,15 +838,35 @@ function renderCard(p) {
 }
 
 async function openReading(id) {
-  const p = await listPieces({}).then((all) => all.find((x) => x.id === id));
-  if (!p) return;
+  const all = await listPieces({});
+  let idx = all.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  let p = all[idx];
+  const labelsTax = state.settings.labels || DEFAULT_LABELS;
+
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `
+  const paint = () => {
+    p = all[idx];
+    backdrop.innerHTML = `
     <div class="modal wide" role="dialog">
+      <div class="reading-nav">
+        <button type="button" class="btn ghost" id="r-prev" ${idx <= 0 ? 'disabled' : ''}>← Prev</button>
+        <span class="dim">${idx + 1} / ${all.length}</span>
+        <button type="button" class="btn ghost" id="r-next" ${idx >= all.length - 1 ? 'disabled' : ''}>Next →</button>
+      </div>
       <h2>${esc((p.labels || [])[0] || 'Fragment')}</h2>
       <p class="dim">${esc(p.sourceName || '')} · ${formatDate(p.updatedAt)}</p>
       <div class="reading-body">${esc(p.text)}</div>
+      <div class="quick-labels reading-labels">
+        ${labelsTax
+          .slice(0, 10)
+          .map((l) => {
+            const on = (p.labels || []).includes(l);
+            return `<button type="button" class="chip micro ${on ? 'active' : ''}" data-r-label="${esc(l)}">${esc(l)}</button>`;
+          })
+          .join('')}
+      </div>
       <div class="field" style="margin-top:1rem">
         <label>Labels (comma-separated)</label>
         <input id="edit-labels" value="${esc((p.labels || []).join(', '))}" />
@@ -758,34 +882,68 @@ async function openReading(id) {
         <button type="button" class="btn primary" id="r-save">Save</button>
       </div>
     </div>`;
+    bindReading();
+  };
+
+  const bindReading = () => {
+    const close = () => backdrop.remove();
+    backdrop.onclick = (e) => {
+      if (e.target === backdrop) close();
+    };
+    $('#r-close', backdrop).onclick = close;
+    $('#r-prev', backdrop).onclick = () => {
+      if (idx > 0) {
+        idx--;
+        paint();
+      }
+    };
+    $('#r-next', backdrop).onclick = () => {
+      if (idx < all.length - 1) {
+        idx++;
+        paint();
+      }
+    };
+    $('#r-board', backdrop).onclick = () => {
+      close();
+      openAddToStoryboard([p]);
+    };
+    $('#r-export', backdrop).onclick = () => {
+      downloadText('reliquary-piece', pieceToMarkdown(p), 'text/markdown');
+    };
+    backdrop.querySelectorAll('[data-r-label]').forEach((btn) => {
+      btn.onclick = () => {
+        const lab = btn.dataset.rLabel;
+        const cur = ($('#edit-labels', backdrop).value || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const set = new Set(cur);
+        if (set.has(lab)) set.delete(lab);
+        else set.add(lab);
+        $('#edit-labels', backdrop).value = [...set].join(', ');
+        btn.classList.toggle('active');
+      };
+    });
+    $('#r-save', backdrop).onclick = async () => {
+      const labels = $('#edit-labels', backdrop)
+        .value.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const tags = $('#edit-tags', backdrop)
+        .value.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await updatePiece(p.id, { labels, tags });
+      p.labels = labels;
+      p.tags = tags;
+      all[idx] = { ...p };
+      toast('Saved', 'ok');
+      await reload();
+    };
+  };
+
   document.body.appendChild(backdrop);
-  const close = () => backdrop.remove();
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) close();
-  });
-  $('#r-close', backdrop).onclick = close;
-  $('#r-board', backdrop).onclick = () => {
-    close();
-    openAddToStoryboard([p]);
-  };
-  $('#r-export', backdrop).onclick = () => {
-    downloadText('reliquary-piece', pieceToMarkdown(p), 'text/markdown');
-  };
-  $('#r-save', backdrop).onclick = async () => {
-    const labels = $('#edit-labels', backdrop)
-      .value.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const tags = $('#edit-tags', backdrop)
-      .value.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    await updatePiece(id, { labels, tags });
-    toast('Saved', 'ok');
-    close();
-    await reload();
-    render();
-  };
+  paint();
 }
 
 async function openAiDevelop(ids) {
@@ -1064,15 +1222,17 @@ async function renderStoryboardEditor(root, actions, boardId) {
     return;
   }
 
+  const dense = state.sbDense !== false;
   actions.innerHTML = `
     <button type="button" class="btn" id="sb-back">← All storyboards</button>
+    <button type="button" class="btn" id="sb-density">${dense ? 'Roomy' : 'Dense'}</button>
     <button type="button" class="btn" id="sb-export">Export MD</button>
     <button type="button" class="btn primary" id="sb-save">Save</button>
   `;
 
   const items = board.items || [];
   root.innerHTML = `
-    <div class="sb-header">
+    <div class="sb-header ${dense ? 'dense' : ''}">
       <div class="field sb-name-field">
         <label>Title</label>
         <input id="sb-name" value="${esc(board.name)}" />
@@ -1087,25 +1247,25 @@ async function renderStoryboardEditor(root, actions, boardId) {
         </select>
       </div>
     </div>
-    <div class="field">
-      <label>Working notes (yours — not from fragments)</label>
-      <textarea id="sb-notes" rows="3" placeholder="Thesis, questions, tone, what this board is trying to become…">${esc(board.notes || '')}</textarea>
+    <div class="field ${dense ? 'sb-notes-dense' : ''}">
+      <label>Working notes</label>
+      <textarea id="sb-notes" rows="${dense ? 2 : 3}" placeholder="Thesis, questions, tone…">${esc(board.notes || '')}</textarea>
     </div>
     <div class="sb-toolbar">
-      <button type="button" class="btn" id="sb-add-heading">＋ Section heading</button>
-      <button type="button" class="btn" id="sb-add-note">＋ Free note</button>
-      <button type="button" class="btn" id="sb-add-pieces">＋ From My pieces</button>
-      <span class="dim">${items.length} item${items.length === 1 ? '' : 's'}</span>
+      <button type="button" class="btn" id="sb-add-heading">＋ Section</button>
+      <button type="button" class="btn" id="sb-add-note">＋ Note</button>
+      <button type="button" class="btn" id="sb-add-pieces">＋ From pieces</button>
+      <span class="dim">${items.length} item${items.length === 1 ? '' : 's'} · drag to reorder</span>
     </div>
-    <div class="sb-lane" id="sb-lane">
+    <div class="sb-lane ${dense ? 'dense' : ''}" id="sb-lane">
       ${
         items.length
           ? items
-              .map((item, idx) => renderStoryboardItem(item, idx, items.length))
+              .map((item, idx) => renderStoryboardItem(item, idx, items.length, dense))
               .join('')
           : `<div class="empty sb-empty">
               <h3>Empty board</h3>
-              <p>Add fragments from <strong>My pieces</strong> (Board button or multi-select), or drop a section heading to start an outline.</p>
+              <p>Add fragments from <strong>My pieces</strong>, or drop a section heading to start an outline. Drag cards to reorder.</p>
             </div>`
       }
     </div>
@@ -1117,7 +1277,7 @@ async function renderStoryboardEditor(root, actions, boardId) {
     notes: $('#sb-notes').value,
   });
 
-  const persist = async (nextItems = items) => {
+  const persist = async (nextItems) => {
     const form = readForm();
     board = await putStoryboard({
       ...board,
@@ -1128,36 +1288,38 @@ async function renderStoryboardEditor(root, actions, boardId) {
     return board;
   };
 
+  const getItems = () => collectItemsFromDom(board.items || []);
+
+  $('#sb-density').onclick = () => {
+    state.sbDense = !dense;
+    render();
+  };
   $('#sb-back').onclick = async () => {
-    await persist(items);
+    await persist(getItems());
     state.activeStoryboardId = null;
     await reload();
     render();
   };
   $('#sb-save').onclick = async () => {
-    // re-read item texts from DOM
-    const next = collectItemsFromDom(board.items || []);
-    await persist(next);
+    await persist(getItems());
     toast('Storyboard saved', 'ok');
-    board = await getStoryboard(boardId);
     render();
   };
   $('#sb-export').onclick = async () => {
-    const next = collectItemsFromDom(board.items || []);
-    const saved = await persist(next);
+    const saved = await persist(getItems());
     downloadText(`reliquary-${saved.name}`, storyboardToMarkdown(saved), 'text/markdown');
     toast('Exported Markdown', 'ok');
   };
   $('#sb-add-heading').onclick = async () => {
     const title = prompt('Section heading:', 'Act / Chapter / Beat');
     if (title === null) return;
-    const next = collectItemsFromDom(board.items || []);
+    const next = getItems();
     next.push(makeHeadingItem(title.trim() || 'Section'));
     await persist(next);
     render();
   };
   $('#sb-add-note').onclick = async () => {
-    const next = collectItemsFromDom(board.items || []);
+    const next = getItems();
     next.push(makeNoteItem('Your note…'));
     await persist(next);
     render();
@@ -1165,13 +1327,12 @@ async function renderStoryboardEditor(root, actions, boardId) {
   $('#sb-add-pieces').onclick = () => {
     state.view = 'pieces';
     state.filter = 'active';
-    state.activeStoryboardId = boardId; // remember which board to return? optional
-    // Keep active id so picker can default? We'll just go to pieces
+    state.activeStoryboardId = boardId;
     toast('Select fragments → ＋ Storyboard', 'ok');
     render();
   };
 
-  bindStoryboardItemActions(board, persist, () => collectItemsFromDom(board.items || []));
+  bindStoryboardItemActions(persist, getItems);
 }
 
 function collectItemsFromDom(fallbackItems) {
@@ -1191,21 +1352,24 @@ function collectItemsFromDom(fallbackItems) {
       const text = el.querySelector('[data-item-text]')?.value ?? base.text;
       return { ...base, kind: 'note', text };
     }
-    // piece: optional edit
     const text = el.querySelector('[data-item-text]')?.value ?? base.text;
     return { ...base, kind: 'piece', text };
   });
 }
 
-function renderStoryboardItem(item, idx, total) {
+function renderStoryboardItem(item, idx, total, dense = true) {
+  const rail = `
+    <div class="sb-item-rail">
+      <span class="sb-drag" title="Drag to reorder" aria-hidden="true">⠿</span>
+      <span class="sb-idx">${idx + 1}</span>
+      <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+      <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
+      <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
+    </div>`;
   if (item.kind === 'heading') {
     return `
-      <div class="sb-item sb-heading" data-item-id="${item.id}" data-kind="heading">
-        <div class="sb-item-rail">
-          <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
-          <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
-        </div>
+      <div class="sb-item sb-heading ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="heading">
+        ${rail}
         <div class="sb-item-body">
           <span class="sb-kind-pill">Section</span>
           <input class="sb-heading-input" data-item-text value="${esc(item.text || '')}" />
@@ -1214,34 +1378,25 @@ function renderStoryboardItem(item, idx, total) {
   }
   if (item.kind === 'note') {
     return `
-      <div class="sb-item sb-note" data-item-id="${item.id}" data-kind="note">
-        <div class="sb-item-rail">
-          <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
-          <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
-        </div>
+      <div class="sb-item sb-note ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="note">
+        ${rail}
         <div class="sb-item-body">
           <span class="sb-kind-pill">Note</span>
-          <textarea data-item-text rows="2">${esc(item.text || '')}</textarea>
+          <textarea data-item-text rows="${dense ? 1 : 2}">${esc(item.text || '')}</textarea>
         </div>
       </div>`;
   }
   return `
-    <div class="sb-item sb-piece" data-item-id="${item.id}" data-kind="piece">
-      <div class="sb-item-rail">
-        <span class="sb-idx">${idx + 1}</span>
-        <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
-        <button type="button" class="icon-btn danger" data-remove title="Remove from board">✕</button>
-      </div>
+    <div class="sb-item sb-piece ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="piece">
+      ${rail}
       <div class="sb-item-body">
         <div class="card-source">${esc(item.sourceName || 'Fragment')}${(item.labels || []).length ? ' · ' + (item.labels || []).map(esc).join(', ') : ''}</div>
-        <textarea data-item-text rows="4" class="sb-piece-text">${esc(item.text || '')}</textarea>
+        <textarea data-item-text rows="${dense ? 2 : 4}" class="sb-piece-text">${esc(item.text || '')}</textarea>
       </div>
     </div>`;
 }
 
-function bindStoryboardItemActions(board, persist, getItems) {
+function bindStoryboardItemActions(persist, getItems) {
   const lane = $('#sb-lane');
   if (!lane) return;
 
@@ -1257,14 +1412,61 @@ function bindStoryboardItemActions(board, persist, getItems) {
     render();
   };
 
+  let dragId = null;
   lane.querySelectorAll('.sb-item').forEach((el) => {
     const id = el.dataset.itemId;
-    el.querySelector('[data-up]')?.addEventListener('click', () => move(id, -1));
-    el.querySelector('[data-down]')?.addEventListener('click', () => move(id, 1));
-    el.querySelector('[data-remove]')?.addEventListener('click', async () => {
+    el.querySelector('[data-up]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      move(id, -1);
+    });
+    el.querySelector('[data-down]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      move(id, 1);
+    });
+    el.querySelector('[data-remove]')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const items = getItems().filter((x) => x.id !== id);
       await persist(items);
       toast('Removed from board (piece still in vault)', 'ok');
+      render();
+    });
+
+    // Don't start drag from form fields
+    el.addEventListener('dragstart', (e) => {
+      if (e.target.closest('input, textarea, button, a')) {
+        e.preventDefault();
+        return;
+      }
+      dragId = id;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      dragId = null;
+      lane.querySelectorAll('.sb-item').forEach((c) => c.classList.remove('drag-over'));
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const fromId = e.dataTransfer.getData('text/plain') || dragId;
+      const toId = id;
+      if (!fromId || fromId === toId) return;
+      const items = getItems();
+      const from = items.findIndex((x) => x.id === fromId);
+      const to = items.findIndex((x) => x.id === toId);
+      if (from < 0 || to < 0) return;
+      const next = [...items];
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      await persist(next);
       render();
     });
   });

@@ -20,11 +20,19 @@
     "drafts",
     "chunking",
     "archaeology",
-    "reliquary"
+    "reliquary",
+    "tauri"
   ],
   "scripts": {
     "start": "python3 -m http.server 8780 --bind 127.0.0.1",
-    "serve": "python3 -m http.server 8780 --bind 127.0.0.1"
+    "serve": "python3 -m http.server 8780 --bind 127.0.0.1",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
   }
 }
+
 

@@ -11,12 +11,27 @@ Excavate valuable ideas, fragments, characters, and passages from years of messy
 
 ---
 
+## For writers who hate tech
+
+You are not installing “an app stack.” You open a vault on **your** computer.  
+**Plain English guide:** [START-HERE.md](./START-HERE.md)
+
+| You | What to do |
+|-----|------------|
+| Prefer double-click | Windows: `start.bat` · Mac: Terminal + `./start.sh` |
+| Prefer browser only | Yes — after the start script, everything is a normal web page |
+| Prefer a real desktop app | Coming later (`.exe` / `.dmg`) — same Reliquary, no Terminal |
+
+Nothing is uploaded. Optional AI is off until you flip it on.
+
+---
+
 ## Install in 60 seconds (no coding required)
 
 You need:
 
 1. A modern browser (Chrome, Edge, Firefox, or Safari)
-2. [Python 3](https://www.python.org/downloads/) — already on most Macs; on Windows, check “Add Python to PATH” when installing
+2. [Python 3](https://www.python.org/downloads/) — already on most Macs; on Windows, check **“Add Python to PATH”** when installing
 
 ### Mac / Linux
 
@@ -49,7 +64,7 @@ Then open **http://127.0.0.1:8780**.
 
 > **Why a tiny server?** Browsers block some features when you open `index.html` as a raw file. Serving locally keeps everything private on your machine — nothing is uploaded.
 
-**Native .exe / .dmg installers** are planned (Tauri) once the release pipeline is set up. For now the start scripts are the easy path.
+**Native .exe / .dmg installers** are planned (Tauri) so derpy-friendly writers never see Terminal. For now the start scripts are the easy path.
 
 ---
 

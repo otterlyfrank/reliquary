@@ -121,19 +121,22 @@ function render() {
   rootEl.innerHTML = `
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <h1>Reliquary</h1>
-        <p>Writing archaeology</p>
+        <img class="brand-mark" src="./public/reliquary-otter-lego.jpg" alt="" width="56" height="56" />
+        <div>
+          <h1>Reliquary</h1>
+          <p>Your draft vault</p>
+        </div>
       </div>
-      <button type="button" class="nav-btn ${state.view === 'excavate' ? 'active' : ''}" data-nav="excavate">Excavate</button>
-      <button type="button" class="nav-btn ${state.view === 'pieces' && state.filter === 'active' ? 'active' : ''}" data-nav="pieces" data-filter="active">All pieces</button>
+      <button type="button" class="nav-btn ${state.view === 'excavate' ? 'active' : ''}" data-nav="excavate">Start here</button>
+      <button type="button" class="nav-btn ${state.view === 'pieces' && state.filter === 'active' ? 'active' : ''}" data-nav="pieces" data-filter="active">My pieces</button>
       <button type="button" class="nav-btn ${state.filter === 'starred' ? 'active' : ''}" data-nav="pieces" data-filter="starred">Starred</button>
-      <button type="button" class="nav-btn ${state.filter === 'develop' ? 'active' : ''}" data-nav="pieces" data-filter="develop">Develop further</button>
+      <button type="button" class="nav-btn ${state.filter === 'develop' ? 'active' : ''}" data-nav="pieces" data-filter="develop">Work on later</button>
       <button type="button" class="nav-btn ${state.filter === 'archive' ? 'active' : ''}" data-nav="pieces" data-filter="archive">Archive</button>
       <button type="button" class="nav-btn ${state.view === 'collections' ? 'active' : ''}" data-nav="collections">Collections</button>
-      <button type="button" class="nav-btn ${state.view === 'sources' ? 'active' : ''}" data-nav="sources">Sources</button>
+      <button type="button" class="nav-btn ${state.view === 'sources' ? 'active' : ''}" data-nav="sources">Imported files</button>
       <button type="button" class="nav-btn ${state.view === 'settings' ? 'active' : ''}" data-nav="settings">Settings</button>
       <div class="sidebar-foot">
-        <p>Local-first · MIT</p>
+        <p>Stays on your computer · free</p>
         <p><a href="#support" data-nav="settings">Support Reliquary</a></p>
       </div>
     </aside>
@@ -157,14 +160,14 @@ function render() {
 }
 
 function viewTitle() {
-  if (state.view === 'excavate') return 'Excavate';
+  if (state.view === 'excavate') return 'Start here';
   if (state.view === 'collections') return 'Collections';
-  if (state.view === 'sources') return 'Sources';
+  if (state.view === 'sources') return 'Imported files';
   if (state.view === 'settings') return 'Settings';
   if (state.filter === 'starred') return 'Starred';
-  if (state.filter === 'develop') return 'Develop further';
+  if (state.filter === 'develop') return 'Work on later';
   if (state.filter === 'archive') return 'Archive';
-  return 'Pieces';
+  return 'My pieces';
 }
 
 function bindNav() {
@@ -183,25 +186,43 @@ function bindNav() {
 // ── Excavate (import) ──────────────────────────────────────
 
 function renderExcavate(root, actions) {
+  const isFirstRun = !state.documents.length;
   actions.innerHTML = `
-    <button type="button" class="btn" id="btn-folder">Import folder</button>
-    <button type="button" class="btn primary" id="btn-files">Add files</button>
+    <button type="button" class="btn" id="btn-folder">Whole folder</button>
+    <button type="button" class="btn primary" id="btn-files">Choose files</button>
   `;
   root.innerHTML = `
+    ${
+      isFirstRun
+        ? `<div class="welcome-hero">
+            <img class="welcome-art" src="./public/reliquary-otter-lego.jpg" alt="LEGO medieval reliquary with otter crest" />
+            <div>
+              <h3>Welcome — this is your vault for unfinished writing</h3>
+              <p class="muted">Reliquary lives only on <strong>your</strong> computer. Nothing is uploaded. Writers with dusty Word docs, half-novels, and notes-app chaos: this is for you.</p>
+              <ol class="how-to">
+                <li><strong>Choose files</strong> (or drag them below) — Word, text, Markdown…</li>
+                <li>We split them into small <strong>pieces</strong> you can actually read</li>
+                <li>Star the gold · park “maybe later” · archive the rest</li>
+              </ol>
+            </div>
+          </div>`
+        : ''
+    }
     <div class="drop-zone" id="drop">
-      <h3>Bring old drafts into the light</h3>
-      <p class="muted">Drop .docx, .odt, .doc, .md, or .txt — or import a whole folder of unfinished work.</p>
-      <p class="dim" style="margin-top:0.75rem">Supported: ${SUPPORTED_EXTENSIONS.join(' ')}</p>
-      <div style="margin-top:1rem">
+      <h3>${isFirstRun ? 'Drop old drafts here' : 'Bring more drafts in'}</h3>
+      <p class="muted">Word docs, text files, Markdown — or a whole messy folder of unfinished work.</p>
+      <p class="dim" style="margin-top:0.75rem">Works with: ${SUPPORTED_EXTENSIONS.join(' ')}</p>
+      <div style="margin-top:1rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
         <button type="button" class="btn primary" id="btn-files-2">Choose files</button>
+        <button type="button" class="btn" id="btn-folder-2">Whole folder</button>
       </div>
     </div>
     <div class="stats">
-      <span>${state.documents.length} sources</span>
+      <span>${state.documents.length} files imported</span>
       <span id="piece-count">… pieces</span>
-      <span>Chunk mode: <strong>${esc(state.settings.chunkMode)}</strong></span>
+      <span>Split size: <strong>${esc(state.settings.chunkMode)}</strong> <span class="dim">(change in Settings)</span></span>
     </div>
-    <p class="muted">After import, pieces land in <strong>All pieces</strong>. Star gold, send promising fragments to <strong>Develop further</strong>, file the rest.</p>
+    <p class="muted">After import, open <strong>My pieces</strong>. Star keepers, send promising bits to <strong>Work on later</strong>, archive the rest. Your words stay local.</p>
     ${supportBlock()}
   `;
   listPieces({}).then((all) => {
@@ -220,6 +241,8 @@ function renderExcavate(root, actions) {
   $('#btn-files').onclick = pick;
   $('#btn-files-2').onclick = pick;
   $('#btn-folder').onclick = importFolder;
+  const folder2 = $('#btn-folder-2');
+  if (folder2) folder2.onclick = importFolder;
 
   const drop = $('#drop');
   drop.addEventListener('dragover', (e) => {
@@ -411,7 +434,11 @@ function renderPieces(root, actions) {
         ? `<div class="card-grid" id="grid">
             ${state.pieces.map((p) => renderCard(p)).join('')}
           </div>`
-        : `<div class="empty"><h3>No pieces here</h3><p>Import drafts from Excavate to begin.</p></div>`
+        : `<div class="empty">
+            <img class="empty-art" src="./public/reliquary-otter-lego.jpg" alt="" />
+            <h3>Nothing here yet</h3>
+            <p>Go to <strong>Start here</strong> and open an old draft. We’ll break it into readable pieces.</p>
+          </div>`
     }
     ${
       state.selected.size
@@ -747,7 +774,7 @@ function renderSources(root, actions) {
           )
           .join('')}
       </div>`
-    : `<div class="empty"><h3>No sources imported</h3><p>Go to Excavate to dig.</p></div>`;
+    : `<div class="empty"><h3>No files imported yet</h3><p>Go to <strong>Start here</strong> and choose a draft.</p></div>`;
   root.querySelectorAll('[data-del-doc]').forEach((btn) => {
     btn.onclick = async () => {
       if (!confirm('Delete this source and all its pieces?')) return;

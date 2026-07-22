@@ -26,7 +26,12 @@ import {
   STORYBOARD_MODES,
   DEFAULT_LABELS,
 } from './storage/db.js';
-import { parseFile, isSupportedFile, SUPPORTED_EXTENSIONS } from './ingest/parse.js';
+import {
+  parseFile,
+  isSupportedFile,
+  SUPPORTED_EXTENSIONS,
+  formatHelpLine,
+} from './ingest/parse.js';
 import { chunkDocument, buildAiChunkPrompt } from './chunk/engine.js';
 import { chatCompletion, checkLlm, developPrompt, parseJsonArray } from './ai/client.js';
 import {
@@ -216,6 +221,7 @@ function bindNav() {
 function renderExcavate(root, actions) {
   const isFirstRun = !state.documents.length;
   actions.innerHTML = `
+    ${isFirstRun ? `<button type="button" class="btn" id="btn-sample">Try a sample</button>` : ''}
     <button type="button" class="btn" id="btn-folder">Whole folder</button>
     <button type="button" class="btn primary" id="btn-files">Choose files</button>
   `;
@@ -226,31 +232,42 @@ function renderExcavate(root, actions) {
             <img class="welcome-art" src="./public/reliquary-otter-lego.jpg" alt="LEGO medieval reliquary with otter crest" />
             <div>
               <h3>Welcome — this is your vault for unfinished writing</h3>
-              <p class="muted">Reliquary lives only on <strong>your</strong> computer. Nothing is uploaded. Writers with dusty Word docs, half-novels, and notes-app chaos: this is for you.</p>
+              <p class="muted">Everything stays on <strong>your</strong> computer. Nothing is uploaded. Dusty Word docs, half-novels, Notes exports: this is for that pile.</p>
               <ol class="how-to">
-                <li><strong>Choose files</strong> (or drag them below) — Word, text, Markdown…</li>
+                <li><strong>Bring files in</strong> — choose, drag, or try the sample</li>
                 <li>We split them into small <strong>pieces</strong> you can actually read</li>
-                <li>Star the gold · send keepers to a <strong>Storyboard</strong> (outline / draft / brainstorm)</li>
+                <li>Star the gold · stack keepers on a <strong>Storyboard</strong></li>
               </ol>
+              <p class="dim" style="margin:0.75rem 0 0">Nervous? Hit <strong>Try a sample</strong> first — no real drafts required.</p>
             </div>
           </div>`
         : ''
     }
     <div class="drop-zone" id="drop">
       <h3>${isFirstRun ? 'Drop old drafts here' : 'Bring more drafts in'}</h3>
-      <p class="muted">Word docs, text files, Markdown — or a whole messy folder of unfinished work.</p>
-      <p class="dim" style="margin-top:0.75rem">Works with: ${SUPPORTED_EXTENSIONS.join(' ')}</p>
+      <p class="muted">Drag files onto this box, or use the buttons. One file or a whole mess of folders is fine.</p>
+      <p class="dim" style="margin-top:0.75rem">${esc(formatHelpLine())}</p>
       <div style="margin-top:1rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
         <button type="button" class="btn primary" id="btn-files-2">Choose files</button>
         <button type="button" class="btn" id="btn-folder-2">Whole folder</button>
+        ${isFirstRun ? `<button type="button" class="btn" id="btn-sample-2">Try a sample</button>` : ''}
       </div>
+    </div>
+    <div class="import-tips">
+      <h4>Quick tips</h4>
+      <ul>
+        <li><strong>Word:</strong> .docx is best. Old .doc works roughly — “Save As → .docx” if text looks weird.</li>
+        <li><strong>Not yet:</strong> PDF scans (images of pages). Export text from Word/Google Docs first.</li>
+        <li><strong>After import:</strong> you’ll land in <strong>My pieces</strong>. Nothing leaves your machine.</li>
+      </ul>
     </div>
     <div class="stats">
       <span>${state.documents.length} files imported</span>
       <span id="piece-count">… pieces</span>
-      <span>Split size: <strong>${esc(state.settings.chunkMode)}</strong> <span class="dim">(change in Settings)</span></span>
+      <span>Split size: <strong>${esc(state.settings.chunkMode)}</strong> <span class="dim">(Settings)</span></span>
     </div>
-    <p class="muted">After import, open <strong>My pieces</strong>. Star keepers, send promising bits to <strong>Work on later</strong>, archive the rest. Your words stay local.</p>
+    <div id="import-progress" class="import-progress" hidden></div>
+    <p class="muted">Next: open <strong>My pieces</strong> → star keepers → <strong>Storyboards</strong> to outline or draft. Your words stay local.</p>
     ${supportBlock()}
   `;
   listPieces({}).then((all) => {
@@ -262,15 +279,26 @@ function renderExcavate(root, actions) {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = SUPPORTED_EXTENSIONS.join(',');
+    input.accept = [
+      ...SUPPORTED_EXTENSIONS,
+      'text/plain',
+      'text/markdown',
+      'text/rtf',
+      'application/rtf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.oasis.opendocument.text',
+    ].join(',');
     input.onchange = () => ingestFiles([...input.files]);
     input.click();
   };
+  const loadSample = () => ingestSampleDraft();
   $('#btn-files').onclick = pick;
   $('#btn-files-2').onclick = pick;
   $('#btn-folder').onclick = importFolder;
-  const folder2 = $('#btn-folder-2');
-  if (folder2) folder2.onclick = importFolder;
+  $('#btn-folder-2')?.addEventListener('click', importFolder);
+  $('#btn-sample')?.addEventListener('click', loadSample);
+  $('#btn-sample-2')?.addEventListener('click', loadSample);
 
   const drop = $('#drop');
   drop.addEventListener('dragover', (e) => {
@@ -281,9 +309,28 @@ function renderExcavate(root, actions) {
   drop.addEventListener('drop', (e) => {
     e.preventDefault();
     drop.classList.remove('drag');
-    const files = [...e.dataTransfer.files].filter(isSupportedFile);
+    const all = [...e.dataTransfer.files];
+    const files = all.filter(isSupportedFile);
+    const skipped = all.length - files.length;
+    if (skipped > 0 && !files.length) {
+      toast(`None of those ${all.length} file(s) are supported yet. Use Word, text, or Markdown.`, 'err');
+      return;
+    }
+    if (skipped > 0) toast(`Skipping ${skipped} unsupported file(s)`, '');
     ingestFiles(files);
   });
+}
+
+async function ingestSampleDraft() {
+  try {
+    const res = await fetch('./samples/messy-draft.md');
+    if (!res.ok) throw new Error('Sample file missing');
+    const text = await res.text();
+    const file = new File([text], 'sample-messy-draft.md', { type: 'text/markdown' });
+    await ingestFiles([file]);
+  } catch (err) {
+    toast(err.message || 'Could not load sample', 'err');
+  }
 }
 
 async function importFolder() {
@@ -291,11 +338,15 @@ async function importFolder() {
     if (window.showDirectoryPicker) {
       const dir = await window.showDirectoryPicker();
       const files = [];
-      for await (const entry of walkDir(dir)) {
+      for await (const entry of walkDir(dir, 0, 3)) {
         if (entry.kind === 'file') {
           const f = await entry.getFile();
           if (isSupportedFile(f)) files.push(f);
         }
+      }
+      if (!files.length) {
+        toast('No supported drafts in that folder', 'err');
+        return;
       }
       await ingestFiles(files);
       return;
@@ -311,25 +362,41 @@ async function importFolder() {
   input.webkitdirectory = true;
   input.onchange = () => {
     const files = [...input.files].filter(isSupportedFile);
+    if (!files.length) {
+      toast('No supported drafts in that folder', 'err');
+      return;
+    }
     ingestFiles(files);
   };
   input.click();
 }
 
-async function* walkDir(dirHandle) {
+/** Walk folder tree up to maxDepth (0 = this folder only). */
+async function* walkDir(dirHandle, depth = 0, maxDepth = 3) {
   for await (const entry of dirHandle.values()) {
     if (entry.kind === 'file') yield entry;
-    else if (entry.kind === 'directory') {
-      // shallow-ish: one level of nesting is enough for drafts folders
+    else if (entry.kind === 'directory' && depth < maxDepth) {
       try {
-        for await (const sub of entry.values()) {
-          if (sub.kind === 'file') yield sub;
-        }
+        yield* walkDir(entry, depth + 1, maxDepth);
       } catch {
-        /* ignore */
+        /* ignore locked subfolders */
       }
     }
   }
+}
+
+function setImportProgress(msg, pct) {
+  const el = $('#import-progress');
+  if (!el) return;
+  el.hidden = !msg;
+  if (!msg) {
+    el.innerHTML = '';
+    return;
+  }
+  const width = Math.max(0, Math.min(100, pct ?? 0));
+  el.innerHTML = `
+    <div class="import-progress-bar"><div style="width:${width}%"></div></div>
+    <p class="dim">${esc(msg)}</p>`;
 }
 
 async function ingestFiles(files) {
@@ -337,18 +404,29 @@ async function ingestFiles(files) {
     toast('No supported files found', 'err');
     return;
   }
+  if (state.busy) {
+    toast('Already importing…', 'err');
+    return;
+  }
   state.busy = true;
   let totalPieces = 0;
-  let errors = 0;
+  let okFiles = 0;
+  const problems = [];
+  const warnings = [];
   toast(`Importing ${files.length} file(s)…`);
+  setImportProgress(`Starting… 0 / ${files.length}`, 0);
   try {
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setImportProgress(`Reading “${file.name}”… (${i + 1} / ${files.length})`, ((i + 0.3) / files.length) * 100);
       try {
         const parsed = await parseFile(file);
-        if (!parsed.text || parsed.text.trim().length < 20) {
-          errors++;
+        if (parsed.warnings?.length) warnings.push(...parsed.warnings.map((w) => `${file.name}: ${w}`));
+        if (!parsed.text || parsed.text.trim().length < 12) {
+          problems.push(`${file.name}: almost no text found`);
           continue;
         }
+        setImportProgress(`Splitting “${file.name}”…`, ((i + 0.6) / files.length) * 100);
         const doc = await putDocument({
           name: parsed.name,
           kind: parsed.kind,
@@ -359,7 +437,6 @@ async function ingestFiles(files) {
           sourceName: parsed.name,
         });
 
-        // Optional AI chunk (only if enabled and LLM configured — expensive)
         if (state.settings.useAiChunk && state.settings.llmBaseUrl && parsed.text.length < 12000) {
           try {
             const { content } = await chatCompletion({
@@ -391,6 +468,19 @@ async function ingestFiles(files) {
           }
         }
 
+        if (!chunks.length) {
+          // Keep at least one piece so short notes still land
+          chunks = [
+            {
+              text: parsed.text.trim(),
+              preview: parsed.text.slice(0, 320),
+              labels: [],
+              tags: [`src:${parsed.name.slice(0, 40)}`],
+              isLarge: parsed.text.length >= 1200,
+            },
+          ];
+        }
+
         const records = chunks.map((c) => ({
           documentId: doc.id,
           sourceName: parsed.name,
@@ -404,20 +494,41 @@ async function ingestFiles(files) {
         await putPiecesBulk(records);
         await putDocument({ ...doc, pieceCount: records.length, text: parsed.text });
         totalPieces += records.length;
+        okFiles += 1;
       } catch (err) {
         console.error(file.name, err);
-        errors++;
-        toast(`${file.name}: ${err.message}`, 'err');
+        problems.push(err.message || `${file.name}: failed`);
       }
+      setImportProgress(`Done “${file.name}”`, ((i + 1) / files.length) * 100);
     }
+
+    if (warnings.length) {
+      console.info('[Reliquary] import warnings', warnings);
+    }
+
+    if (okFiles === 0) {
+      toast(problems[0] || 'Nothing imported', 'err');
+      setImportProgress(
+        problems.length
+          ? `Couldn’t import. ${problems.slice(0, 2).join(' · ')}`
+          : 'Nothing imported',
+        100
+      );
+      return;
+    }
+
     toast(
-      `Excavated ${totalPieces} piece(s) from ${files.length} file(s)${errors ? ` · ${errors} issue(s)` : ''}`,
+      `Imported ${okFiles} file(s) → ${totalPieces} piece(s)${problems.length ? ` · ${problems.length} skipped` : ''}`,
       'ok'
     );
     state.view = 'pieces';
     state.filter = 'active';
     await reload();
     render();
+    // brief success note on pieces view
+    if (problems.length) {
+      setTimeout(() => toast(`Skipped ${problems.length}: ${problems[0]}`, 'err'), 600);
+    }
   } finally {
     state.busy = false;
   }

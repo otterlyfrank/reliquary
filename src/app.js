@@ -32,7 +32,15 @@ import {
   SUPPORTED_EXTENSIONS,
   formatHelpLine,
 } from './ingest/parse.js';
-import { chunkDocument, buildAiChunkPrompt } from './chunk/engine.js';
+import {
+  chunkDocument,
+  buildAiChunkPrompt,
+  resolveChunkOptions,
+  describeChunkOptions,
+  estimatePieceCount,
+  CHUNK_UNITS,
+  CHUNK_SIZE_PRESETS,
+} from './chunk/engine.js';
 import { chatCompletion, checkLlm, developPrompt, parseJsonArray } from './ai/client.js';
 import {
   downloadText,
@@ -61,6 +69,11 @@ let state = {
   busy: false,
   /** Card density: comfortable | compact */
   cardDensity: 'comfortable',
+  /**
+   * Per-session offline split overrides for the next import (null = use Settings).
+   * @type {null | Record<string, any>}
+   */
+  importChunk: null,
 };
 
 let rootEl = null;
@@ -268,8 +281,9 @@ function renderExcavate(root, actions) {
     <div class="stats">
       <span>${state.documents.length} files imported</span>
       <span id="piece-count">… pieces</span>
-      <span>Split size: <strong>${esc(state.settings.chunkMode)}</strong> <span class="dim">(Settings)</span></span>
+      <span>Split: <strong>${esc(describeChunkOptions(activeChunkSettings()))}</strong></span>
     </div>
+    ${renderImportSplitPanel()}
     <div id="import-progress" class="import-progress" hidden></div>
     <p class="muted">Next: open <strong>My pieces</strong> → star keepers → <strong>Storyboards</strong> to outline or draft. Your words stay local.</p>
     ${supportBlock()}
@@ -278,6 +292,7 @@ function renderExcavate(root, actions) {
     const el = $('#piece-count');
     if (el) el.textContent = `${all.length} pieces`;
   });
+  bindImportSplitPanel();
 
   const pick = () => {
     const input = document.createElement('input');
@@ -436,10 +451,11 @@ async function ingestFiles(files) {
           kind: parsed.kind,
           text: parsed.text,
         });
-        let chunks = chunkDocument(parsed.text, {
-          mode: state.settings.chunkMode || 'balanced',
+        const chunkOpts = {
+          ...activeChunkSettings(),
           sourceName: parsed.name,
-        });
+        };
+        let chunks = chunkDocument(parsed.text, chunkOpts);
 
         if (state.settings.useAiChunk && state.settings.llmBaseUrl && parsed.text.length < 12000) {
           try {
@@ -452,7 +468,10 @@ async function ingestFiles(files) {
                   role: 'system',
                   content: 'You split writing into reusable fragments. JSON array only.',
                 },
-                { role: 'user', content: buildAiChunkPrompt(parsed.text, state.settings.chunkMode) },
+                {
+                  role: 'user',
+                  content: buildAiChunkPrompt(parsed.text, chunkOpts),
+                },
               ],
             });
             const arr = parseJsonArray(content);
@@ -1525,6 +1544,180 @@ function renderCollections(root, actions) {
   });
 }
 
+// ── Offline split controls ─────────────────────────────────
+
+function activeChunkSettings() {
+  const base = state.settings || {};
+  if (state.importChunk) return { ...base, ...state.importChunk };
+  return base;
+}
+
+function readChunkFields(prefix) {
+  const unit = $(`#${prefix}-unit`)?.value || 'hybrid';
+  const sizePreset = $(`#${prefix}-size`)?.value || 'medium';
+  const pageWords = Number($(`#${prefix}-page-words`)?.value) || 300;
+  const minChars = Number($(`#${prefix}-min`)?.value) || 40;
+  const maxChars = Number($(`#${prefix}-max`)?.value) || 1800;
+  const respectPageBreaks = !!$(`#${prefix}-pages`)?.checked;
+  const keepDialogueTogether = !!$(`#${prefix}-dialogue`)?.checked;
+  // Keep legacy chunkMode in sync for older displays
+  const chunkMode =
+    sizePreset === 'fine' ? 'atomic' : sizePreset === 'coarse' ? 'conservative' : 'balanced';
+  return {
+    chunkUnit: unit,
+    chunkSizePreset: sizePreset,
+    chunkPageWords: pageWords,
+    chunkMinChars: minChars,
+    chunkMaxChars: maxChars,
+    respectPageBreaks,
+    keepDialogueTogether,
+    chunkMode,
+  };
+}
+
+function renderChunkControls(prefix, values, { showEstimate = false } = {}) {
+  const v = resolveChunkOptions(values || {});
+  const unitOpts = CHUNK_UNITS.map(
+    (u) =>
+      `<option value="${u.id}" ${v.unit === u.id ? 'selected' : ''} title="${esc(u.hint)}">${esc(
+        u.label
+      )}</option>`
+  ).join('');
+  const sizeOpts = CHUNK_SIZE_PRESETS.map(
+    (p) =>
+      `<option value="${p.id}" ${v.sizePreset === p.id ? 'selected' : ''} title="${esc(p.hint)}">${esc(
+        p.label
+      )}</option>`
+  ).join('');
+  const customHidden = v.sizePreset === 'custom' ? '' : 'hidden';
+  const pageHidden = v.unit === 'page' || v.sizePreset === 'custom' ? '' : 'hidden';
+
+  return `
+    <div class="chunk-controls" data-chunk-prefix="${esc(prefix)}">
+      <div class="field">
+        <label>How to cut the writing (offline)</label>
+        <select id="${prefix}-unit">${unitOpts}</select>
+        <p class="dim chunk-hint" id="${prefix}-unit-hint" style="margin:0.35rem 0 0">${esc(
+          CHUNK_UNITS.find((u) => u.id === v.unit)?.hint || ''
+        )}</p>
+      </div>
+      <div class="field">
+        <label>Piece size</label>
+        <select id="${prefix}-size">${sizeOpts}</select>
+        <p class="dim chunk-hint" id="${prefix}-size-hint" style="margin:0.35rem 0 0">${esc(
+          CHUNK_SIZE_PRESETS.find((p) => p.id === v.sizePreset)?.hint || ''
+        )}</p>
+      </div>
+      <div class="grid-2 chunk-custom" id="${prefix}-custom" ${customHidden ? 'hidden' : ''}>
+        <div class="field">
+          <label>Min characters (merge tinier scraps)</label>
+          <input type="number" id="${prefix}-min" min="1" max="2000" value="${v.minChars}" />
+        </div>
+        <div class="field">
+          <label>Max characters (split larger blocks)</label>
+          <input type="number" id="${prefix}-max" min="40" max="20000" value="${v.maxChars}" />
+        </div>
+      </div>
+      <div class="field chunk-page-words" id="${prefix}-page-wrap" ${
+        v.unit === 'page' || v.sizePreset === 'custom' ? '' : 'hidden'
+      }>
+        <label>Words per page (page mode)</label>
+        <input type="number" id="${prefix}-page-words" min="40" max="2000" value="${v.pageWords}" />
+      </div>
+      <label class="field check-row">
+        <input type="checkbox" id="${prefix}-pages" ${v.respectPageBreaks ? 'checked' : ''} />
+        Honor page breaks (form-feed / “Page N” markers)
+      </label>
+      <label class="field check-row">
+        <input type="checkbox" id="${prefix}-dialogue" ${v.keepDialogueTogether ? 'checked' : ''} />
+        Keep short dialogue lines together when possible
+      </label>
+      ${
+        showEstimate
+          ? `<p class="dim" id="${prefix}-estimate" style="margin:0.5rem 0 0">Live estimate updates when you change options.</p>`
+          : `<p class="dim" id="${prefix}-summary" style="margin:0.5rem 0 0">Using: <strong>${esc(
+              describeChunkOptions(v)
+            )}</strong></p>`
+      }
+    </div>
+  `;
+}
+
+function wireChunkControls(prefix, onChange) {
+  const unitSel = $(`#${prefix}-unit`);
+  const sizeSel = $(`#${prefix}-size`);
+  const refreshUi = () => {
+    const unit = unitSel?.value || 'hybrid';
+    const size = sizeSel?.value || 'medium';
+    const unitMeta = CHUNK_UNITS.find((u) => u.id === unit);
+    const sizeMeta = CHUNK_SIZE_PRESETS.find((p) => p.id === size);
+    const uh = $(`#${prefix}-unit-hint`);
+    const sh = $(`#${prefix}-size-hint`);
+    if (uh) uh.textContent = unitMeta?.hint || '';
+    if (sh) sh.textContent = sizeMeta?.hint || '';
+    const custom = $(`#${prefix}-custom`);
+    if (custom) custom.hidden = size !== 'custom';
+    const pageWrap = $(`#${prefix}-page-wrap`);
+    if (pageWrap) pageWrap.hidden = !(unit === 'page' || size === 'custom');
+    const summary = $(`#${prefix}-summary`);
+    if (summary) {
+      summary.innerHTML = `Using: <strong>${esc(describeChunkOptions(readChunkFields(prefix)))}</strong>`;
+    }
+    onChange?.(readChunkFields(prefix));
+  };
+  unitSel?.addEventListener('change', refreshUi);
+  sizeSel?.addEventListener('change', refreshUi);
+  [`${prefix}-min`, `${prefix}-max`, `${prefix}-page-words`, `${prefix}-pages`, `${prefix}-dialogue`].forEach(
+    (id) => {
+      $(`#${id}`)?.addEventListener('change', refreshUi);
+      $(`#${id}`)?.addEventListener('input', refreshUi);
+    }
+  );
+  refreshUi();
+}
+
+function renderImportSplitPanel() {
+  const usingSession = !!state.importChunk;
+  const values = activeChunkSettings();
+  return `
+    <div class="piece-card import-split-card">
+      <h3 style="font-family:var(--serif);margin:0 0 0.35rem">How to split (this import)</h3>
+      <p class="muted" style="margin:0 0 0.75rem">
+        Offline by default — no AI required. Pick sentence / paragraph / page cuts and piece size.
+        ${usingSession ? '<strong>Session override is on</strong> (won’t change Settings until you save it there).' : 'Defaults come from <strong>Settings</strong>.'}
+      </p>
+      ${renderChunkControls('imp', values)}
+      <div class="piece-actions" style="margin-top:0.75rem">
+        <button type="button" class="btn primary" id="imp-apply">Use for next imports</button>
+        <button type="button" class="btn" id="imp-save-default">Save as my default</button>
+        <button type="button" class="btn ghost" id="imp-reset" ${usingSession ? '' : 'disabled'}>Reset to Settings</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindImportSplitPanel() {
+  if (!$('#imp-unit')) return;
+  wireChunkControls('imp');
+  $('#imp-apply')?.addEventListener('click', () => {
+    state.importChunk = readChunkFields('imp');
+    toast(`Split set for imports · ${describeChunkOptions(state.importChunk)}`, 'ok');
+    render();
+  });
+  $('#imp-save-default')?.addEventListener('click', async () => {
+    const fields = readChunkFields('imp');
+    state.settings = await setSettings(fields);
+    state.importChunk = null;
+    toast('Saved as default split settings', 'ok');
+    render();
+  });
+  $('#imp-reset')?.addEventListener('click', () => {
+    state.importChunk = null;
+    toast('Using Settings defaults again', 'ok');
+    render();
+  });
+}
+
 // ── Sources ────────────────────────────────────────────────
 
 function renderSources(root, actions) {
@@ -1539,12 +1732,17 @@ function renderSources(root, actions) {
             <p class="muted" style="margin:0">${d.charCount?.toLocaleString?.() || d.charCount} chars · ${d.pieceCount || '?'} pieces · ${esc(d.kind)}</p>
             <p class="dim" style="margin:0">${formatDate(d.importedAt)}</p>
             <div class="piece-actions">
+              <button type="button" class="btn" data-resplit-doc="${d.id}">Re-split offline…</button>
               <button type="button" class="btn danger" data-del-doc="${d.id}">Remove source & pieces</button>
             </div>
           </article>`
           )
           .join('')}
-      </div>`
+      </div>
+      <p class="muted" style="margin-top:1rem">
+        <strong>Re-split offline</strong> replaces this source’s pieces using your current split settings
+        (sentence / paragraph / page, etc.). Starred pieces from this source are kept only if you cancel — re-split starts clean.
+      </p>`
     : `<div class="empty"><h3>No files imported yet</h3><p>Go to <strong>Start here</strong> and choose a draft.</p></div>`;
   root.querySelectorAll('[data-del-doc]').forEach((btn) => {
     btn.onclick = async () => {
@@ -1554,6 +1752,96 @@ function renderSources(root, actions) {
       render();
     };
   });
+  root.querySelectorAll('[data-resplit-doc]').forEach((btn) => {
+    btn.onclick = () => openResplitModal(btn.dataset.resplitDoc);
+  });
+}
+
+async function openResplitModal(docId) {
+  const doc = state.documents.find((d) => d.id === docId);
+  if (!doc?.text) {
+    toast('No stored text for this source — re-import the file', 'err');
+    return;
+  }
+  const existing = await listPieces({ documentId: docId });
+  const starred = existing.filter((p) => p.starred).length;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal piece-card" style="max-width:28rem">
+      <h3 style="font-family:var(--serif);margin:0 0 0.5rem">Re-split “${esc(doc.name)}”</h3>
+      <p class="muted">
+        Offline only. Replaces <strong>${existing.length}</strong> piece(s)
+        ${starred ? ` (including <strong>${starred}</strong> starred)` : ''}.
+        Source text is kept; only the cut changes.
+      </p>
+      ${renderChunkControls('rs', activeChunkSettings())}
+      <p class="dim" id="rs-est" style="margin:0.5rem 0 0"></p>
+      <div class="piece-actions" style="margin-top:1rem">
+        <button type="button" class="btn primary" id="rs-go">Re-split now</button>
+        <button type="button" class="btn ghost" id="rs-cancel">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+  $('#rs-cancel', backdrop).onclick = close;
+  const updateEst = () => {
+    const opts = { ...readChunkFields('rs'), sourceName: doc.name };
+    const n = estimatePieceCount(doc.text, opts);
+    const el = $('#rs-est', backdrop);
+    if (el) el.textContent = `About ${n} piece(s) with ${describeChunkOptions(opts)}`;
+  };
+  wireChunkControls('rs', updateEst);
+  updateEst();
+  $('#rs-go', backdrop).onclick = async () => {
+    if (
+      !confirm(
+        `Replace all pieces from “${doc.name}”?${starred ? ` This clears ${starred} starred piece(s) from this source.` : ''}`
+      )
+    ) {
+      return;
+    }
+    try {
+      const opts = { ...readChunkFields('rs'), sourceName: doc.name };
+      // delete old pieces only (keep document)
+      for (const p of existing) {
+        await deletePiece(p.id);
+      }
+      let chunks = chunkDocument(doc.text, opts);
+      if (!chunks.length) {
+        chunks = [
+          {
+            text: doc.text.trim(),
+            preview: doc.text.slice(0, 320),
+            labels: [],
+            tags: [`src:${doc.name.slice(0, 40)}`],
+            isLarge: doc.text.length >= 1200,
+          },
+        ];
+      }
+      const records = chunks.map((c) => ({
+        documentId: doc.id,
+        sourceName: doc.name,
+        text: c.text,
+        preview: c.preview,
+        labels: c.labels || [],
+        tags: c.tags || [],
+        isLarge: c.isLarge,
+        status: 'active',
+      }));
+      await putPiecesBulk(records);
+      await putDocument({ ...doc, pieceCount: records.length, text: doc.text });
+      await reload();
+      close();
+      toast(`Re-split into ${records.length} piece(s)`, 'ok');
+      render();
+    } catch (err) {
+      toast(err.message || String(err), 'err');
+    }
+  };
 }
 
 // ── Settings ───────────────────────────────────────────────
@@ -1562,8 +1850,8 @@ function renderSettings(root, actions) {
   actions.innerHTML = '';
   const s = state.settings;
   root.innerHTML = `
-    <div class="piece-card" style="max-width:36rem">
-      <h3 style="font-family:var(--serif);margin:0 0 0.75rem">Appearance & chunking</h3>
+    <div class="piece-card" style="max-width:40rem">
+      <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Appearance</h3>
       <div class="field">
         <label>Theme</label>
         <select id="s-theme">
@@ -1571,27 +1859,28 @@ function renderSettings(root, actions) {
           <option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option>
         </select>
       </div>
-      <div class="field">
-        <label>Chunking aggressiveness</label>
-        <select id="s-chunk">
-          <option value="conservative" ${s.chunkMode === 'conservative' ? 'selected' : ''}>Conservative — larger pieces</option>
-          <option value="balanced" ${s.chunkMode === 'balanced' || !s.chunkMode ? 'selected' : ''}>Balanced</option>
-          <option value="atomic" ${s.chunkMode === 'atomic' ? 'selected' : ''}>Atomic — smaller fragments</option>
-        </select>
-      </div>
-      <label class="field" style="flex-direction:row;align-items:center;gap:0.5rem">
+    </div>
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem">
+      <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Offline split (LLM-free)</h3>
+      <p class="muted" style="margin:0 0 0.85rem">
+        These controls decide how drafts become pieces <strong>without AI</strong>.
+        Sentence → page grain, size, page breaks, and dialogue packing.
+        You can also override per import on <strong>Start here</strong>.
+      </p>
+      ${renderChunkControls('s', s)}
+      <label class="field check-row" style="margin-top:0.75rem">
         <input type="checkbox" id="s-ai-chunk" ${s.useAiChunk ? 'checked' : ''} />
-        AI-assisted chunking on import (optional, needs LLM; slower)
+        Also try AI-assisted chunking on import (optional; needs LLM URL below; falls back offline)
       </label>
     </div>
-    <div class="piece-card" style="max-width:36rem;margin-top:1rem">
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.75rem">Labels</h3>
       <div class="field">
         <label>One label per line (your taxonomy)</label>
         <textarea id="s-labels" rows="8">${esc((s.labels || DEFAULT_LABELS).join('\n'))}</textarea>
       </div>
     </div>
-    <div class="piece-card" style="max-width:36rem;margin-top:1rem">
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.5rem">Optional AI</h3>
       <p class="muted" style="margin-top:0">Clearly optional. Local Ollama or any OpenAI-compatible API (including Grok).</p>
       <div class="field">
@@ -1611,7 +1900,7 @@ function renderSettings(root, actions) {
       </div>
       <p id="s-llm-status" class="dim"></p>
     </div>
-    <div class="piece-card" style="max-width:36rem;margin-top:1rem">
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.75rem">Support links (shown in app)</h3>
       <div class="field">
         <label>GitHub Sponsors URL</label>
@@ -1628,14 +1917,17 @@ function renderSettings(root, actions) {
     <div id="support">${supportBlock()}</div>
   `;
 
+  wireChunkControls('s');
+
   $('#s-save').onclick = async () => {
     const labels = $('#s-labels')
       .value.split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
+    const chunk = readChunkFields('s');
     state.settings = await setSettings({
       theme: $('#s-theme').value,
-      chunkMode: $('#s-chunk').value,
+      ...chunk,
       useAiChunk: $('#s-ai-chunk').checked,
       llmBaseUrl: $('#s-llm-url').value.trim(),
       llmModel: $('#s-llm-model').value.trim(),
@@ -1644,6 +1936,7 @@ function renderSettings(root, actions) {
       supportGithubSponsors: $('#s-gh').value.trim(),
       supportKofi: $('#s-kofi').value.trim(),
     });
+    state.importChunk = null;
     applyTheme(state.settings.theme);
     toast('Settings saved', 'ok');
     render();

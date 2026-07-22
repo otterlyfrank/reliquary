@@ -1006,3 +1006,43 @@ select {
     grid-template-columns: 2.25rem 1fr;
   }
 }
+
+/* Offline chunk controls */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 560px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field.check-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.field.check-row input[type='checkbox'] {
+  width: auto;
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.import-split-card {
+  max-width: 40rem;
+  margin: 1rem 0;
+}
+
+.chunk-controls .chunk-hint {
+  font-size: 0.82rem;
+  line-height: 1.4;
+}

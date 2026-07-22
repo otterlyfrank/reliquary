@@ -32,7 +32,16 @@ const DEFAULT_LABELS = [
 
 export const DEFAULT_SETTINGS = {
   theme: 'dark',
+  // Legacy size knob (kept for older vaults; engine maps to size presets)
   chunkMode: 'balanced', // conservative | balanced | atomic
+  // Offline fine-tuning (LLM-free path)
+  chunkUnit: 'hybrid', // sentence | paragraph | section | page | hybrid
+  chunkSizePreset: 'medium', // fine | medium | coarse | custom
+  chunkMinChars: 40,
+  chunkMaxChars: 1800,
+  chunkPageWords: 300,
+  respectPageBreaks: true,
+  keepDialogueTogether: true,
   useAiChunk: false,
   llmBaseUrl: '',
   llmApiKey: '',

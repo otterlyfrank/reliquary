@@ -166,10 +166,9 @@ reliquary/
 
 Reliquary is free and open source (MIT). If it helps you recover work that would otherwise stay buried, please consider supporting development:
 
-- **[GitHub Sponsors](https://github.com/sponsors)** — set your sponsor URL in Settings  
-- **[Ko-fi](https://ko-fi.com)** — set your Ko-fi URL in Settings  
+- **[Ko-fi — otterlyfrank](https://ko-fi.com/otterlyfrank)** — coffee money keeps the dig going  
 
-Links appear in the app under **Support Reliquary**.
+The app defaults to this Ko-fi link (empty GitHub Sponsors is hidden). You can override URLs in Settings if needed.
 
 ---
 

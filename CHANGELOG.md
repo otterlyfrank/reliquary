@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-07-29
+
+### Fixes
+
+- Collection → Storyboard migrate now finds pieces via `collectionIds` and name tags (not only `pieceIds`)
+- Vault import preserves collection `pieceIds` / notes
+- Service worker precache includes monogram, yield helper, and parse worker (`reliquary-shell-v2`)
+
 ## 1.2.0 — 2026-07-29
 
 ### Mobile, vault, and shell (P0–P2)

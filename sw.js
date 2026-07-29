@@ -1,5 +1,5 @@
 /* Reliquary service worker — shell cache for installability + offline reopen */
-const CACHE = 'reliquary-shell-v1';
+const CACHE = 'reliquary-shell-v2';
 
 const PRECACHE = [
   './',
@@ -12,8 +12,11 @@ const PRECACHE = [
   './src/ai/client.js',
   './src/chunk/engine.js',
   './src/ingest/parse.js',
+  './src/ingest/parse-worker.js',
   './src/lib/export.js',
+  './src/lib/yield.js',
   './public/reliquary-otter-lego.jpg',
+  './public/reliquary-mark.svg',
   './public/icon-192.png',
   './public/icon-512.png',
   './manifest.webmanifest',

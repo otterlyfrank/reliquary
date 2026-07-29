@@ -276,10 +276,23 @@ function wireShellChrome() {
   };
   $('#menu-toggle')?.addEventListener('click', () => setSidebar(!state.sidebarOpen));
   $('#sidebar-backdrop')?.addEventListener('click', () => setSidebar(false));
-  // Escape closes mobile drawer
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.sidebarOpen) setSidebar(false);
-  });
+  // Escape closes mobile drawer (once per session — shell rebuild reuses same listener)
+  if (!wireShellChrome._escBound) {
+    wireShellChrome._escBound = true;
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.sidebarOpen) {
+        state.sidebarOpen = false;
+        $('#sidebar')?.classList.remove('open');
+        const bd = $('#sidebar-backdrop');
+        if (bd) bd.hidden = true;
+        const toggleBtn = $('#menu-toggle');
+        if (toggleBtn) {
+          toggleBtn.setAttribute('aria-label', 'Open menu');
+          toggleBtn.setAttribute('aria-expanded', 'false');
+        }
+      }
+    });
+  }
 }
 
 function updateShellChrome() {
@@ -1710,6 +1723,16 @@ function renderCollections(root, actions) {
     await reload();
     render();
   };
+  const memberCount = (c) => {
+    const explicit = new Set(c.pieceIds || []);
+    for (const p of state.pieces) {
+      if ((p.collectionIds || []).includes(c.id) || (p.tags || []).includes(c.name)) {
+        explicit.add(p.id);
+      }
+    }
+    // Also count pieces not in current filter - use full list when available
+    return explicit.size;
+  };
   root.innerHTML = state.collections.length
     ? `<div class="card-grid">
         ${state.collections
@@ -1717,7 +1740,7 @@ function renderCollections(root, actions) {
             (c) => `
           <article class="piece-card">
             <h3 style="font-family:var(--serif);margin:0">${esc(c.name)}</h3>
-            <p class="muted" style="margin:0">${esc(c.description || '—')} · ${(c.pieceIds || []).length} piece(s)</p>
+            <p class="muted" style="margin:0">${esc(c.description || '—')} · ${memberCount(c)} linked in current view</p>
             <div class="piece-actions">
               <button type="button" class="btn primary" data-to-board="${c.id}" title="Copy pieces into a new storyboard">→ Storyboard</button>
               <button type="button" class="btn" data-export-col="${c.id}">Export MD</button>
@@ -1749,7 +1772,13 @@ function renderCollections(root, actions) {
         await reload();
         state.view = 'storyboards';
         state.activeStoryboardId = board.id;
-        toast(`Migrated to storyboard “${board.name}”`, 'ok');
+        const n = (board.items || []).filter((i) => i.kind === 'piece').length;
+        toast(
+          n
+            ? `Migrated ${n} piece(s) → “${board.name}”`
+            : `Created empty board “${board.name}” (no linked pieces found)`,
+          n ? 'ok' : ''
+        );
         render();
       } catch (err) {
         toast(err.message || String(err), 'err');

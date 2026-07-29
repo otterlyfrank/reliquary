@@ -344,6 +344,9 @@ export async function putCollection(col) {
     id: col.id || uuid(),
     name: col.name || 'Untitled collection',
     description: col.description || '',
+    notes: col.notes || '',
+    /** Optional explicit membership (also inferred from piece.collectionIds / tags) */
+    pieceIds: Array.isArray(col.pieceIds) ? col.pieceIds : [],
     createdAt: col.createdAt || now,
     updatedAt: now,
   };
@@ -583,6 +586,7 @@ export async function importVault(payload, { keepApiKey = true } = {}) {
 
 /**
  * Convert a collection into a new storyboard (migration helper).
+ * Membership: explicit pieceIds, then piece.collectionIds, then tag matching the collection name.
  */
 export async function collectionToStoryboard(collectionId) {
   const cols = await listCollections();
@@ -590,15 +594,35 @@ export async function collectionToStoryboard(collectionId) {
   if (!col) throw new Error('Collection not found');
   const allPieces = await listPieces({});
   const byId = new Map(allPieces.map((p) => [p.id, p]));
+  const seen = new Set();
   const items = [];
+
   for (const pid of col.pieceIds || []) {
     const p = byId.get(pid);
-    if (p) items.push(pieceToBoardItem(p));
+    if (p && !seen.has(p.id)) {
+      items.push(pieceToBoardItem(p));
+      seen.add(p.id);
+    }
   }
+  for (const p of allPieces) {
+    if (seen.has(p.id)) continue;
+    const inCol = (p.collectionIds || []).includes(collectionId);
+    const tagged = col.name && (p.tags || []).includes(col.name);
+    if (inCol || tagged) {
+      items.push(pieceToBoardItem(p));
+      seen.add(p.id);
+    }
+  }
+
+  const noteBits = [];
+  if (col.notes?.trim()) noteBits.push(col.notes.trim());
+  if (col.description?.trim()) noteBits.push(col.description.trim());
+  noteBits.push('Migrated from Collections');
+
   return putStoryboard({
     name: col.name || 'From collection',
     mode: 'brainstorm',
-    notes: col.notes || 'Migrated from Collections',
+    notes: noteBits.join('\n\n'),
     items,
   });
 }

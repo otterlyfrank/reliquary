@@ -47,10 +47,13 @@ export const DEFAULT_SETTINGS = {
   llmApiKey: '',
   llmModel: 'llama3.2',
   labels: DEFAULT_LABELS,
-  supportGithubSponsors: 'https://github.com/sponsors',
-  supportKofi: 'https://ko-fi.com',
+  /** Leave empty to hide GitHub Sponsors */
+  supportGithubSponsors: '',
+  supportKofi: 'https://ko-fi.com/otterlyfrank',
   supportNote: 'Reliquary is free and open source. Support keeps the vault open.',
 };
+
+export const VAULT_SCHEMA_VERSION = 1;
 
 function ensureStores(db) {
   if (!db.objectStoreNames.contains('documents')) {
@@ -469,6 +472,15 @@ export async function getSettings() {
   const map = { ...DEFAULT_SETTINGS };
   for (const row of rows) map[row.key] = row.value;
   if (!Array.isArray(map.labels) || !map.labels.length) map.labels = [...DEFAULT_LABELS];
+  // Normalize legacy generic sponsor placeholders
+  const gh = String(map.supportGithubSponsors || '').trim();
+  if (!gh || /^https?:\/\/github\.com\/sponsors\/?$/i.test(gh)) {
+    map.supportGithubSponsors = '';
+  }
+  const kofi = String(map.supportKofi || '').trim();
+  if (!kofi || kofi === 'https://ko-fi.com' || kofi === 'https://ko-fi.com/') {
+    map.supportKofi = DEFAULT_SETTINGS.supportKofi;
+  }
   return map;
 }
 
@@ -478,6 +490,117 @@ export async function setSettings(partial) {
     await reqP(t.objectStore('settings').put({ key, value }));
   }
   return getSettings();
+}
+
+async function clearStore(name) {
+  const t = await tx([name], 'readwrite');
+  await reqP(t.objectStore(name).clear());
+}
+
+/**
+ * Full vault snapshot for backup / restore.
+ * API keys are redacted unless includeSecrets is true.
+ */
+export async function exportVault({ includeSecrets = false } = {}) {
+  const settings = await getSettings();
+  const safeSettings = { ...settings };
+  if (!includeSecrets && safeSettings.llmApiKey) {
+    safeSettings.llmApiKey = '[redacted]';
+  }
+  const [documents, pieces, collections, storyboards] = await Promise.all([
+    listDocuments(),
+    listPieces({}),
+    listCollections(),
+    listStoryboards(),
+  ]);
+  return {
+    app: 'reliquary',
+    schemaVersion: VAULT_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    settings: safeSettings,
+    documents,
+    pieces,
+    collections,
+    storyboards,
+  };
+}
+
+/**
+ * Restore a Reliquary vault export. Replaces documents/pieces/collections/storyboards.
+ * Keeps current API key when export has redacted key.
+ */
+export async function importVault(payload, { keepApiKey = true } = {}) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid vault file');
+  }
+  if (payload.app && payload.app !== 'reliquary') {
+    throw new Error(`Not a Reliquary vault (app: ${payload.app})`);
+  }
+  const current = await getSettings();
+
+  if (payload.settings && typeof payload.settings === 'object') {
+    const next = { ...payload.settings };
+    const key = next.llmApiKey;
+    if (!key || key === '[redacted]' || key === '***') {
+      next.llmApiKey = keepApiKey ? current.llmApiKey || '' : '';
+    }
+    await setSettings(next);
+  }
+
+  await clearStore('documents');
+  await clearStore('pieces');
+  await clearStore('collections');
+  await clearStore('storyboards');
+
+  let docs = 0;
+  let pieces = 0;
+  let boards = 0;
+  let cols = 0;
+
+  for (const d of payload.documents || []) {
+    if (!d || typeof d !== 'object') continue;
+    await putDocument({ ...d, id: d.id || uuid() });
+    docs++;
+  }
+  for (const p of payload.pieces || []) {
+    if (!p || typeof p !== 'object') continue;
+    await putPiece({ ...p, id: p.id || uuid() });
+    pieces++;
+  }
+  for (const c of payload.collections || []) {
+    if (!c || typeof c !== 'object') continue;
+    await putCollection({ ...c, id: c.id || uuid() });
+    cols++;
+  }
+  for (const b of payload.storyboards || []) {
+    if (!b || typeof b !== 'object') continue;
+    await putStoryboard({ ...b, id: b.id || uuid() });
+    boards++;
+  }
+
+  return { documents: docs, pieces, collections: cols, storyboards: boards };
+}
+
+/**
+ * Convert a collection into a new storyboard (migration helper).
+ */
+export async function collectionToStoryboard(collectionId) {
+  const cols = await listCollections();
+  const col = cols.find((c) => c.id === collectionId);
+  if (!col) throw new Error('Collection not found');
+  const allPieces = await listPieces({});
+  const byId = new Map(allPieces.map((p) => [p.id, p]));
+  const items = [];
+  for (const pid of col.pieceIds || []) {
+    const p = byId.get(pid);
+    if (p) items.push(pieceToBoardItem(p));
+  }
+  return putStoryboard({
+    name: col.name || 'From collection',
+    mode: 'brainstorm',
+    notes: col.notes || 'Migrated from Collections',
+    items,
+  });
 }
 
 export { uuid, DEFAULT_LABELS };

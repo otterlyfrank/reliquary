@@ -98,17 +98,17 @@ A **Tauri** wrapper lives in `src-tauri/` for people who want a classic `.dmg` /
 
 | Area | What you get |
 |------|----------------|
-| **Ingestion** | `.txt`, `.md`, `.docx`, `.odt`, legacy `.doc` (best-effort) · multi-file · folder import |
-| **Chunking** | Structural (headings, blanks, breaks) + heuristics · Conservative / Balanced / Atomic |
+| **Ingestion** | `.txt`, `.md`, `.docx`, `.odt`, legacy `.doc` (best-effort) · multi-file · folder import · large text off main thread |
+| **Chunking** | Offline units (sentence → page + hybrid) with size fine-tuning · optional AI refine |
 | **Optional AI chunk** | If you configure an LLM, import can refine boundaries (off by default) |
 | **Labels** | Configurable multi-label taxonomy (defaults included) + free tags |
-| **Cards** | Readable, star / pin / energy / develop / archive / export · large cards for long passages |
+| **Cards** | Star / pin / energy / develop / archive · compact density · multi-select · shelves + pagination |
 | **Develop queue** | Send fragments to a “Work on later” shelf |
-| **Storyboards** | Collect fragments into a **brainstorm**, **outline**, or **working draft** — **drag to reorder**, dense/roomy mode, section headings, free notes, export Markdown |
-| **Cards** | Compact/comfortable density · multi-select bulk label/tag/star/archive/export · quick label chips · reading prev/next |
-| **Multi-select + AI** | Structural suggestions (story / essay / poem / chapter) via optional LLM |
-| **Export** | Per-piece, views, or full storyboard as Markdown |
-| **Local-first** | IndexedDB only · no account · no cloud required |
+| **Storyboards** | Brainstorm / outline / draft · drag or Alt+↑↓ reorder · headings & notes · export Markdown |
+| **Vault backup** | Settings → full local export/import (API keys redacted by default) |
+| **Keyboard** | **⌘K** command palette · mobile bottom nav + drawer |
+| **Export** | Per-piece, views, storyboards, or full vault JSON |
+| **Local-first** | IndexedDB only · no account · no cloud required · system fonts first |
 
 ---
 

@@ -1,5 +1,6 @@
 import { openDb } from './storage/db.js';
 import { mountApp } from './app.js';
+import { initPwa } from './pwa.js';
 
 function showBootError(root, err) {
   const msg = err?.message || String(err);
@@ -52,6 +53,7 @@ async function boot() {
   }
 
   try {
+    initPwa();
     await openDb();
     await mountApp(root);
   } catch (err) {

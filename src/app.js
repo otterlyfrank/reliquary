@@ -49,6 +49,7 @@ import {
   storyboardToMarkdown,
   formatDate,
 } from './lib/export.js';
+import { installUiHtml, wireInstallButtons } from './pwa.js';
 
 /** @type {any} */
 let state = {
@@ -85,6 +86,9 @@ export async function mountApp(root) {
     applyTheme(state.settings.theme);
     await reload();
     render();
+    window.addEventListener('reliquary-pwa-change', () => {
+      if (rootEl) render();
+    });
   } catch (err) {
     console.error('[Reliquary] mount failed', err);
     throw err;
@@ -178,6 +182,7 @@ function render() {
       <button type="button" class="nav-btn ${state.view === 'settings' ? 'active' : ''}" data-nav="settings">Settings</button>
       <div class="sidebar-foot">
         <p>Stays on your computer · free</p>
+        <div class="pwa-side-slot">${installUiHtml('compact')}</div>
         <p><a href="#support" data-nav="settings">Support Reliquary</a></p>
       </div>
     </aside>
@@ -199,6 +204,7 @@ function render() {
   else if (state.view === 'collections') renderCollections(viewRoot, actions);
   else if (state.view === 'sources') renderSources(viewRoot, actions);
   else renderSettings(viewRoot, actions);
+  wireInstallButtons(rootEl);
 }
 
 function viewTitle() {
@@ -1911,6 +1917,7 @@ function renderSettings(root, actions) {
         <input id="s-kofi" value="${esc(s.supportKofi || '')}" />
       </div>
     </div>
+    ${installUiHtml('full')}
     <div class="piece-actions" style="margin-top:1rem">
       <button type="button" class="btn primary" id="s-save">Save settings</button>
     </div>
@@ -1918,6 +1925,7 @@ function renderSettings(root, actions) {
   `;
 
   wireChunkControls('s');
+  wireInstallButtons(root);
 
   $('#s-save').onclick = async () => {
     const labels = $('#s-labels')

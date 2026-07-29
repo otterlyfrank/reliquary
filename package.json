@@ -1,6 +1,6 @@
 {
   "name": "reliquary",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": false,
   "type": "module",
   "description": "Local-first writing archaeology — excavate gold from messy drafts",
@@ -26,6 +26,7 @@
   "scripts": {
     "start": "python3 -m http.server 8780 --bind 127.0.0.1",
     "serve": "python3 -m http.server 8780 --bind 127.0.0.1",
+    "test": "node tests/chunk-engine.test.js",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"

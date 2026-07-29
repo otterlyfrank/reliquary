@@ -15,8 +15,9 @@
   --pin: #e0c070;
   --radius: 12px;
   --radius-sm: 8px;
-  --font: "Source Sans 3", system-ui, sans-serif;
-  --serif: "Literata", "Iowan Old Style", Palatino, Georgia, serif;
+  /* System stack first so the vault works offline without Google Fonts */
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Source Sans 3", sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Literata", serif;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   --sidebar: 15.5rem;
 }
@@ -250,6 +251,236 @@ select {
 
 .sidebar-foot a {
   color: var(--accent);
+}
+
+/* Skip link + focus */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.5rem;
+  z-index: 300;
+  padding: 0.5rem 0.85rem;
+  background: var(--accent);
+  color: #1a1410;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 0.5rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.menu-toggle {
+  display: none;
+  flex-shrink: 0;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(8, 6, 4, 0.55);
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Collapsed “More” nav */
+.nav-more {
+  border: 0;
+  margin: 0.15rem 0 0;
+  padding: 0;
+}
+.nav-more > summary {
+  list-style: none;
+}
+.nav-more > summary::-webkit-details-marker {
+  display: none;
+}
+.nav-more-sum {
+  appearance: none;
+  cursor: pointer;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.nav-more-sum:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.nav-more[open] > .nav-more-sum {
+  color: var(--text);
+}
+.nav-more .nav-btn {
+  width: 100%;
+  padding-left: 1rem;
+  font-size: 0.9rem;
+}
+
+/* Excavation ribbon after import */
+.excavate-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 0.9rem;
+  margin-bottom: 0.85rem;
+  background: var(--accent-soft);
+  border: 1px solid rgba(212, 165, 116, 0.35);
+  border-radius: var(--radius);
+}
+.excavate-ribbon strong {
+  color: var(--accent);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0.5rem;
+  flex-wrap: wrap;
+}
+
+.shelf-row {
+  margin-bottom: 0.65rem;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Command palette */
+.cmd-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(12, 10, 8, 0.62);
+  display: grid;
+  place-items: start center;
+  padding: 12vh 1rem 1rem;
+}
+.cmd-palette {
+  width: min(28rem, 96vw);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.55rem;
+  box-shadow: var(--shadow);
+}
+.cmd-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  color: inherit;
+  margin-bottom: 0.4rem;
+  box-sizing: border-box;
+}
+.cmd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 50vh;
+  overflow: auto;
+}
+.cmd-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  min-height: 2.5rem;
+}
+.cmd-item:hover,
+.cmd-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cmd-foot {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  padding: 0 0.35rem;
+}
+.cmd-empty {
+  padding: 0.75rem;
+  text-align: center;
+}
+
+/* Mobile bottom nav */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  padding: 0.25rem 0.2rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.3);
+}
+.mobile-nav-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.35rem 0.15rem;
+  min-height: 3rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.mobile-nav-btn span {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.mobile-nav-btn:hover,
+.mobile-nav-btn:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.mobile-nav-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .pwa-side-slot {
@@ -815,6 +1046,12 @@ select {
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
+    padding-bottom: 4.25rem;
+  }
+  .menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .sidebar {
     display: none;
@@ -825,6 +1062,26 @@ select {
     inset: 0 auto 0 0;
     width: min(var(--sidebar), 88vw);
     z-index: 50;
+    box-shadow: var(--shadow);
+  }
+  .sidebar-backdrop:not([hidden]) {
+    display: block;
+  }
+  .mobile-nav {
+    display: grid;
+  }
+  .toast-host {
+    bottom: 4.5rem;
+  }
+  .content {
+    padding: 1rem 1rem 2rem;
+  }
+  .topbar {
+    padding: 0.7rem 0.85rem;
+  }
+  .topbar-actions .btn {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.6rem;
   }
 }
 

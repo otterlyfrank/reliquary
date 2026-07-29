@@ -3,9 +3,17 @@ export function downloadText(filename, text, mime = 'text/plain') {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.endsWith('.md') || filename.endsWith('.txt') ? filename : `${filename}.md`;
+  const hasExt = /\.[a-z0-9]+$/i.test(filename);
+  if (hasExt) a.download = filename;
+  else if (mime.includes('json')) a.download = `${filename}.json`;
+  else a.download = `${filename}.md`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export function downloadJson(filename, obj) {
+  const name = String(filename).endsWith('.json') ? filename : `${filename}.json`;
+  downloadText(name, JSON.stringify(obj, null, 2), 'application/json');
 }
 
 export function pieceToMarkdown(p) {

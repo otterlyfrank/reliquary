@@ -23,6 +23,9 @@ import {
   addPiecesToStoryboard,
   makeHeadingItem,
   makeNoteItem,
+  exportVault,
+  importVault,
+  collectionToStoryboard,
   STORYBOARD_MODES,
   DEFAULT_LABELS,
 } from './storage/db.js';
@@ -44,12 +47,14 @@ import {
 import { chatCompletion, checkLlm, developPrompt, parseJsonArray } from './ai/client.js';
 import {
   downloadText,
+  downloadJson,
   pieceToMarkdown,
   collectionToMarkdown,
   storyboardToMarkdown,
   formatDate,
 } from './lib/export.js';
 import { installUiHtml, wireInstallButtons } from './pwa.js';
+import { yieldToMain } from './lib/yield.js';
 
 /** @type {any} */
 let state = {
@@ -75,9 +80,18 @@ let state = {
    * @type {null | Record<string, any>}
    */
   importChunk: null,
+  /** Piece list page (0-based) */
+  piecePage: 0,
+  /** Last import summary for excavation ribbon */
+  lastExcavation: null,
+  /** Mobile / drawer sidebar open */
+  sidebarOpen: false,
 };
 
+const PIECES_PER_PAGE = 48;
+
 let rootEl = null;
+let shellBuilt = false;
 
 export async function mountApp(root) {
   rootEl = root;
@@ -86,6 +100,7 @@ export async function mountApp(root) {
     applyTheme(state.settings.theme);
     await reload();
     render();
+    wireGlobalKeys();
     window.addEventListener('reliquary-pwa-change', () => {
       if (rootEl) render();
     });
@@ -93,6 +108,27 @@ export async function mountApp(root) {
     console.error('[Reliquary] mount failed', err);
     throw err;
   }
+}
+
+function wireGlobalKeys() {
+  if (wireGlobalKeys._bound) return;
+  wireGlobalKeys._bound = true;
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      openCommandPalette();
+      return;
+    }
+    // Storyboard keyboard reorder: Alt+↑ / Alt+↓ when focus is on an item
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (e.altKey || e.metaKey)) {
+      const item = e.target?.closest?.('.sb-item');
+      if (item && state.view === 'storyboards' && state.activeStoryboardId) {
+        e.preventDefault();
+        const btn = item.querySelector(e.key === 'ArrowUp' ? '[data-up]' : '[data-down]');
+        btn?.click();
+      }
+    }
+  });
 }
 
 async function reload() {
@@ -130,16 +166,24 @@ function toast(msg, kind = '') {
     host = document.createElement('div');
     host.id = 'toast-host';
     host.className = 'toast-host';
+    host.setAttribute('aria-live', 'polite');
+    host.setAttribute('aria-relevant', 'additions');
     document.body.appendChild(host);
   }
+  host.setAttribute('aria-live', kind === 'err' ? 'assertive' : 'polite');
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
+  el.setAttribute('role', kind === 'err' ? 'alert' : 'status');
   el.textContent = msg;
   host.appendChild(el);
+  const reduced =
+    typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   setTimeout(() => {
-    el.style.opacity = '0';
-    el.style.transition = 'opacity 0.3s';
-    setTimeout(() => el.remove(), 300);
+    if (!reduced) {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.3s';
+    }
+    setTimeout(() => el.remove(), reduced ? 0 : 300);
   }, 3200);
 }
 
@@ -153,33 +197,44 @@ function esc(s) {
 
 // ── Render ─────────────────────────────────────────────────
 
-function render() {
-  if (!rootEl) return;
-  const counts = {
-    active: 0,
-    develop: 0,
-    starred: 0,
-    archive: 0,
-  };
-  // badges from full set — async free: approximate from current load on next reload
+function navBtn(view, label, filter = null) {
+  let active = false;
+  if (view === 'pieces' && filter) {
+    active = state.view === 'pieces' && state.filter === filter;
+  } else if (view === 'pieces') {
+    active = state.view === 'pieces' && ['active', 'all'].includes(state.filter);
+  } else {
+    active = state.view === view;
+  }
+  const f = filter ? ` data-filter="${filter}"` : '';
+  const cur = active ? ' aria-current="page"' : '';
+  return `<button type="button" class="nav-btn ${active ? 'active' : ''}" data-nav="${view}"${f}${cur}>${label}</button>`;
+}
+
+function buildShell() {
   rootEl.innerHTML = `
-    <aside class="sidebar" id="sidebar">
+    <a class="skip-link" href="#view-root">Skip to content</a>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+    <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}" id="sidebar" aria-label="Sidebar">
       <div class="brand">
-        <img class="brand-mark" src="./public/reliquary-otter-lego.jpg" alt="" width="56" height="56" />
+        <img class="brand-mark" src="./public/reliquary-mark.svg" alt="" width="48" height="48" />
         <div>
           <h1>Reliquary</h1>
           <p>Your draft vault</p>
         </div>
       </div>
-      <button type="button" class="nav-btn ${state.view === 'excavate' ? 'active' : ''}" data-nav="excavate">Start here</button>
-      <button type="button" class="nav-btn ${state.view === 'pieces' && state.filter === 'active' ? 'active' : ''}" data-nav="pieces" data-filter="active">My pieces</button>
-      <button type="button" class="nav-btn ${state.view === 'storyboards' ? 'active' : ''}" data-nav="storyboards">Storyboards</button>
-      <button type="button" class="nav-btn ${state.filter === 'starred' ? 'active' : ''}" data-nav="pieces" data-filter="starred">Starred</button>
-      <button type="button" class="nav-btn ${state.filter === 'develop' ? 'active' : ''}" data-nav="pieces" data-filter="develop">Work on later</button>
-      <button type="button" class="nav-btn ${state.filter === 'archive' ? 'active' : ''}" data-nav="pieces" data-filter="archive">Archive</button>
-      <button type="button" class="nav-btn ${state.view === 'collections' ? 'active' : ''}" data-nav="collections">Collections</button>
-      <button type="button" class="nav-btn ${state.view === 'sources' ? 'active' : ''}" data-nav="sources">Imported files</button>
-      <button type="button" class="nav-btn ${state.view === 'settings' ? 'active' : ''}" data-nav="settings">Settings</button>
+      ${navBtn('excavate', 'Start here')}
+      ${navBtn('pieces', 'My pieces', 'active')}
+      ${navBtn('storyboards', 'Storyboards')}
+      ${navBtn('sources', 'Imported files')}
+      <details class="nav-more ${['collections', 'settings'].includes(state.view) || ['starred', 'develop', 'archive'].includes(state.filter) ? 'open' : ''}">
+        <summary class="nav-more-sum">More</summary>
+        ${navBtn('pieces', 'Starred', 'starred')}
+        ${navBtn('pieces', 'Work on later', 'develop')}
+        ${navBtn('pieces', 'Archive', 'archive')}
+        ${navBtn('collections', 'Collections')}
+        ${navBtn('settings', 'Settings')}
+      </details>
       <div class="sidebar-foot">
         <p>Stays on your computer · free</p>
         <div class="pwa-side-slot">${installUiHtml('compact')}</div>
@@ -188,16 +243,90 @@ function render() {
     </aside>
     <div class="main">
       <header class="topbar">
+        <button type="button" class="btn ghost menu-toggle" id="menu-toggle" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
         <h2 id="view-title">${esc(viewTitle())}</h2>
         <div class="topbar-actions" id="top-actions"></div>
       </header>
-      <div class="content" id="view-root"></div>
+      <div class="content" id="view-root" tabindex="-1"></div>
     </div>
+    <nav class="mobile-nav" aria-label="Primary">
+      <button type="button" class="mobile-nav-btn ${state.view === 'excavate' ? 'active' : ''}" data-nav="excavate" ${state.view === 'excavate' ? 'aria-current="page"' : ''}><span aria-hidden="true">⌂</span>Start</button>
+      <button type="button" class="mobile-nav-btn ${state.view === 'pieces' ? 'active' : ''}" data-nav="pieces" data-filter="active" ${state.view === 'pieces' ? 'aria-current="page"' : ''}><span aria-hidden="true">▤</span>Pieces</button>
+      <button type="button" class="mobile-nav-btn ${state.view === 'storyboards' ? 'active' : ''}" data-nav="storyboards" ${state.view === 'storyboards' ? 'aria-current="page"' : ''}><span aria-hidden="true">◎</span>Boards</button>
+      <button type="button" class="mobile-nav-btn ${state.view === 'settings' ? 'active' : ''}" data-nav="settings" ${state.view === 'settings' ? 'aria-current="page"' : ''}><span aria-hidden="true">⚙</span>More</button>
+    </nav>
   `;
-
+  shellBuilt = true;
   bindNav();
+  wireShellChrome();
+}
+
+function wireShellChrome() {
+  const setSidebar = (open) => {
+    state.sidebarOpen = open;
+    const sb = $('#sidebar');
+    const bd = $('#sidebar-backdrop');
+    const toggleBtn = $('#menu-toggle');
+    sb?.classList.toggle('open', open);
+    if (bd) bd.hidden = !open;
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  };
+  $('#menu-toggle')?.addEventListener('click', () => setSidebar(!state.sidebarOpen));
+  $('#sidebar-backdrop')?.addEventListener('click', () => setSidebar(false));
+  // Escape closes mobile drawer
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.sidebarOpen) setSidebar(false);
+  });
+}
+
+function updateShellChrome() {
+  const title = $('#view-title');
+  if (title) title.textContent = viewTitle();
+  rootEl.querySelectorAll('[data-nav]').forEach((btn) => {
+    const view = btn.dataset.nav;
+    const filter = btn.dataset.filter;
+    let active = false;
+    if (view === 'pieces' && filter) {
+      active = state.view === 'pieces' && state.filter === filter;
+    } else if (view === 'pieces') {
+      active = state.view === 'pieces' && !['starred', 'develop', 'archive'].includes(state.filter);
+    } else {
+      active = state.view === view;
+    }
+    // mobile "More" highlights settings OR collections
+    if (btn.classList.contains('mobile-nav-btn') && view === 'settings') {
+      active = ['settings', 'collections', 'sources'].includes(state.view);
+    }
+    btn.classList.toggle('active', active);
+    if (active) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+  });
+  const sb = $('#sidebar');
+  sb?.classList.toggle('open', state.sidebarOpen);
+  const bd = $('#sidebar-backdrop');
+  if (bd) bd.hidden = !state.sidebarOpen;
+  const pwa = $('.pwa-side-slot');
+  if (pwa) pwa.innerHTML = installUiHtml('compact');
+}
+
+function render(opts = {}) {
+  if (!rootEl) return;
+  if (!shellBuilt || opts.forceShell) {
+    buildShell();
+  } else {
+    updateShellChrome();
+  }
   const viewRoot = $('#view-root');
   const actions = $('#top-actions');
+  if (!viewRoot || !actions) {
+    buildShell();
+    return render({ forceShell: true });
+  }
+  actions.innerHTML = '';
+  viewRoot.innerHTML = '';
   if (state.view === 'excavate') renderExcavate(viewRoot, actions);
   else if (state.view === 'pieces') renderPieces(viewRoot, actions);
   else if (state.view === 'storyboards') renderStoryboards(viewRoot, actions);
@@ -233,10 +362,26 @@ function bindNav() {
       if (state.view === 'pieces' && !btn.dataset.filter) state.filter = 'active';
       if (state.view === 'storyboards' && !btn.dataset.keepBoard) state.activeStoryboardId = null;
       state.selected = new Set();
+      state.sidebarOpen = false;
+      state.piecePage = 0;
       await reload();
       render();
     });
   });
+}
+
+function excavationRibbonHtml() {
+  const r = state.lastExcavation;
+  if (!r) return '';
+  return `<div class="excavate-ribbon" role="status">
+    <div>
+      <strong>Unearthed ${r.pieces} piece${r.pieces === 1 ? '' : 's'}</strong>
+      <span class="dim"> · ${r.files} file${r.files === 1 ? '' : 's'}${
+        r.skipped ? ` · ${r.skipped} skipped` : ''
+      }</span>
+    </div>
+    <button type="button" class="btn ghost" id="ribbon-dismiss" aria-label="Dismiss">Dismiss</button>
+  </div>`;
 }
 
 // ── Excavate (import) ──────────────────────────────────────
@@ -529,6 +674,8 @@ async function ingestFiles(files) {
         problems.push(err.message || `${file.name}: failed`);
       }
       setImportProgress(`Done “${file.name}”`, ((i + 1) / files.length) * 100);
+      // Keep the shell responsive during multi-file digs
+      await yieldToMain();
     }
 
     if (warnings.length) {
@@ -546,15 +693,21 @@ async function ingestFiles(files) {
       return;
     }
 
+    state.lastExcavation = {
+      pieces: totalPieces,
+      files: okFiles,
+      skipped: problems.length,
+      at: Date.now(),
+    };
     toast(
       `Imported ${okFiles} file(s) → ${totalPieces} piece(s)${problems.length ? ` · ${problems.length} skipped` : ''}`,
       'ok'
     );
     state.view = 'pieces';
     state.filter = 'active';
+    state.piecePage = 0;
     await reload();
     render();
-    // brief success note on pieces view
     if (problems.length) {
       setTimeout(() => toast(`Skipped ${problems.length}: ${problems[0]}`, 'err'), 600);
     }
@@ -568,6 +721,16 @@ async function ingestFiles(files) {
 function renderPieces(root, actions) {
   const labels = state.settings.labels || DEFAULT_LABELS;
   const dense = state.cardDensity === 'compact';
+  const total = state.pieces.length;
+  const pages = Math.max(1, Math.ceil(total / PIECES_PER_PAGE));
+  if (state.piecePage >= pages) state.piecePage = Math.max(0, pages - 1);
+  const pagePieces = state.pieces.slice(
+    state.piecePage * PIECES_PER_PAGE,
+    state.piecePage * PIECES_PER_PAGE + PIECES_PER_PAGE
+  );
+  const shelf = (id, label) =>
+    `<button type="button" class="chip ${state.filter === id ? 'active' : ''}" data-shelf="${id}">${label}</button>`;
+
   actions.innerHTML = `
     <button type="button" class="btn" id="btn-density">${dense ? 'Comfortable cards' : 'Compact cards'}</button>
     <button type="button" class="btn" id="btn-select-all" ${!state.pieces.length ? 'disabled' : ''}>Select all</button>
@@ -588,14 +751,22 @@ function renderPieces(root, actions) {
     render();
   };
   $('#btn-select-all').onclick = () => {
-    if (state.selected.size === state.pieces.length) state.selected = new Set();
-    else state.selected = new Set(state.pieces.map((p) => p.id));
+    if (state.selected.size === pagePieces.length) state.selected = new Set();
+    else state.selected = new Set(pagePieces.map((p) => p.id));
     render();
   };
 
   root.innerHTML = `
+    ${excavationRibbonHtml()}
+    <div class="chip-row shelf-row">
+      ${shelf('active', 'Active')}
+      ${shelf('starred', 'Starred')}
+      ${shelf('develop', 'Work on later')}
+      ${shelf('archive', 'Archive')}
+      ${shelf('all', 'All')}
+    </div>
     <div class="filter-row">
-      <input class="search" id="q" placeholder="Search pieces…" value="${esc(state.q)}" />
+      <input class="search" id="q" placeholder="Search pieces…" value="${esc(state.q)}" aria-label="Search pieces" />
       <button type="button" class="chip ${!state.label ? 'active' : ''}" data-label="">All labels</button>
       ${labels
         .slice(0, 14)
@@ -606,17 +777,26 @@ function renderPieces(root, actions) {
         .join('')}
     </div>
     <div class="stats">
-      <span>${state.pieces.length} shown</span>
+      <span>${total} shown${total > PIECES_PER_PAGE ? ` · page ${state.piecePage + 1}/${pages}` : ''}</span>
       <span>${state.selected.size} selected</span>
       <span class="dim">${dense ? 'compact' : 'comfortable'}</span>
     </div>
     ${
-      state.pieces.length
+      pagePieces.length
         ? `<div class="card-grid ${dense ? 'compact' : ''}" id="grid">
-            ${state.pieces.map((p) => renderCard(p, dense)).join('')}
-          </div>`
+            ${pagePieces.map((p) => renderCard(p, dense)).join('')}
+          </div>
+          ${
+            pages > 1
+              ? `<div class="pager">
+                  <button type="button" class="btn" id="piece-prev" ${state.piecePage <= 0 ? 'disabled' : ''}>Previous</button>
+                  <span class="dim">Page ${state.piecePage + 1} of ${pages}</span>
+                  <button type="button" class="btn" id="piece-next" ${state.piecePage >= pages - 1 ? 'disabled' : ''}>Next</button>
+                </div>`
+              : ''
+          }`
         : `<div class="empty">
-            <img class="empty-art" src="./public/reliquary-otter-lego.jpg" alt="" />
+            <img class="empty-art" src="./public/reliquary-mark.svg" alt="" />
             <h3>Nothing here yet</h3>
             <p>Go to <strong>Start here</strong> and open an old draft. We’ll break it into readable pieces.</p>
           </div>`
@@ -641,9 +821,31 @@ function renderPieces(root, actions) {
     }
   `;
 
+  $('#ribbon-dismiss')?.addEventListener('click', () => {
+    state.lastExcavation = null;
+    render();
+  });
+  root.querySelectorAll('[data-shelf]').forEach((btn) => {
+    btn.onclick = async () => {
+      state.filter = btn.dataset.shelf;
+      state.piecePage = 0;
+      state.selected = new Set();
+      await reload();
+      render();
+    };
+  });
+  $('#piece-prev')?.addEventListener('click', () => {
+    state.piecePage = Math.max(0, state.piecePage - 1);
+    render();
+  });
+  $('#piece-next')?.addEventListener('click', () => {
+    state.piecePage = state.piecePage + 1;
+    render();
+  });
   $('#q').addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       state.q = e.target.value.trim();
+      state.piecePage = 0;
       await reload();
       render();
     }
@@ -848,15 +1050,15 @@ function renderCard(p, dense = false) {
           .join('')}
       </div>
       <div class="piece-actions">
-        <button type="button" class="icon-btn ${p.starred ? 'on' : ''}" data-star title="Star">★</button>
-        <button type="button" class="icon-btn ${p.pinned ? 'on' : ''}" data-pin title="Pin">📌</button>
-        <button type="button" class="icon-btn" data-energy title="Energy">${energy}</button>
-        <button type="button" class="icon-btn" data-open title="Read (or double-click card)">Read</button>
-        <button type="button" class="icon-btn" data-board title="Add to storyboard">Board</button>
-        <button type="button" class="icon-btn" data-develop title="Work on later">✎</button>
-        <button type="button" class="icon-btn" data-archive title="Archive">Archive</button>
-        <button type="button" class="icon-btn" data-export title="Export">↓</button>
-        <button type="button" class="icon-btn danger" data-del title="Delete">✕</button>
+        <button type="button" class="icon-btn ${p.starred ? 'on' : ''}" data-star title="Star" aria-label="Star">★</button>
+        <button type="button" class="icon-btn ${p.pinned ? 'on' : ''}" data-pin title="Pin" aria-label="Pin">📌</button>
+        <button type="button" class="icon-btn" data-energy title="Energy" aria-label="Energy ${energy}">${energy}</button>
+        <button type="button" class="icon-btn" data-open title="Read" aria-label="Read piece">Read</button>
+        <button type="button" class="icon-btn" data-board title="Add to storyboard" aria-label="Add to storyboard">Board</button>
+        <button type="button" class="icon-btn" data-develop title="Work on later" aria-label="Work on later">✎</button>
+        <button type="button" class="icon-btn" data-archive title="Archive" aria-label="Archive">Archive</button>
+        <button type="button" class="icon-btn" data-export title="Export" aria-label="Export Markdown">↓</button>
+        <button type="button" class="icon-btn danger" data-del title="Delete" aria-label="Delete">✕</button>
       </div>
     </article>
   `;
@@ -1387,13 +1589,13 @@ function renderStoryboardItem(item, idx, total, dense = true) {
     <div class="sb-item-rail">
       <span class="sb-drag" title="Drag to reorder" aria-hidden="true">⠿</span>
       <span class="sb-idx">${idx + 1}</span>
-      <button type="button" class="icon-btn" data-up title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-      <button type="button" class="icon-btn" data-down title="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
-      <button type="button" class="icon-btn danger" data-remove title="Remove">✕</button>
+      <button type="button" class="icon-btn" data-up title="Move up (Alt+↑)" aria-label="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+      <button type="button" class="icon-btn" data-down title="Move down (Alt+↓)" aria-label="Move down" ${idx >= total - 1 ? 'disabled' : ''}>↓</button>
+      <button type="button" class="icon-btn danger" data-remove title="Remove" aria-label="Remove from board">✕</button>
     </div>`;
   if (item.kind === 'heading') {
     return `
-      <div class="sb-item sb-heading ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="heading">
+      <div class="sb-item sb-heading ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="heading" tabindex="0">
         ${rail}
         <div class="sb-item-body">
           <span class="sb-kind-pill">Section</span>
@@ -1403,7 +1605,7 @@ function renderStoryboardItem(item, idx, total, dense = true) {
   }
   if (item.kind === 'note') {
     return `
-      <div class="sb-item sb-note ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="note">
+      <div class="sb-item sb-note ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="note" tabindex="0">
         ${rail}
         <div class="sb-item-body">
           <span class="sb-kind-pill">Note</span>
@@ -1412,7 +1614,7 @@ function renderStoryboardItem(item, idx, total, dense = true) {
       </div>`;
   }
   return `
-    <div class="sb-item sb-piece ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="piece">
+    <div class="sb-item sb-piece ${dense ? 'dense' : ''}" draggable="true" data-item-id="${item.id}" data-kind="piece" tabindex="0">
       ${rail}
       <div class="sb-item-body">
         <div class="card-source">${esc(item.sourceName || 'Fragment')}${(item.labels || []).length ? ' · ' + (item.labels || []).map(esc).join(', ') : ''}</div>
@@ -1515,8 +1717,9 @@ function renderCollections(root, actions) {
             (c) => `
           <article class="piece-card">
             <h3 style="font-family:var(--serif);margin:0">${esc(c.name)}</h3>
-            <p class="muted" style="margin:0">${esc(c.description || '—')}</p>
+            <p class="muted" style="margin:0">${esc(c.description || '—')} · ${(c.pieceIds || []).length} piece(s)</p>
             <div class="piece-actions">
+              <button type="button" class="btn primary" data-to-board="${c.id}" title="Copy pieces into a new storyboard">→ Storyboard</button>
               <button type="button" class="btn" data-export-col="${c.id}">Export MD</button>
               <button type="button" class="btn danger" data-del-col="${c.id}">Delete</button>
             </div>
@@ -1524,14 +1727,39 @@ function renderCollections(root, actions) {
           )
           .join('')}
       </div>
-      <p class="muted" style="margin-top:1rem">Tip: open a piece → add collection IDs in a future pass, or multi-select and file from Develop. For v1, export collections after tagging pieces with matching tags, or star pieces into a working set and export the Starred view.</p>`
-    : `<div class="empty"><h3>No collections yet</h3><p>Create named shelves for projects and archives.</p></div>`;
+      <p class="muted" style="margin-top:1rem">
+        Collections are legacy shelves. Prefer <strong>Storyboards</strong> for outlining and drafting.
+        Use <strong>→ Storyboard</strong> to migrate a collection’s pieces into a board (collection stays until you delete it).
+      </p>`
+    : `<div class="empty">
+        <h3>No collections</h3>
+        <p class="muted">Storyboards are the main way to stack keepers. Collections remain for older vaults — create one only if you need a simple named shelf.</p>
+        <p style="margin-top:1rem"><button type="button" class="btn" id="go-boards">Open Storyboards</button></p>
+      </div>`;
 
+  $('#go-boards')?.addEventListener('click', () => {
+    state.view = 'storyboards';
+    render();
+  });
+
+  root.querySelectorAll('[data-to-board]').forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        const board = await collectionToStoryboard(btn.dataset.toBoard);
+        await reload();
+        state.view = 'storyboards';
+        state.activeStoryboardId = board.id;
+        toast(`Migrated to storyboard “${board.name}”`, 'ok');
+        render();
+      } catch (err) {
+        toast(err.message || String(err), 'err');
+      }
+    };
+  });
   root.querySelectorAll('[data-export-col]').forEach((btn) => {
     btn.onclick = async () => {
       const col = state.collections.find((c) => c.id === btn.dataset.exportCol);
       const pieces = await listPieces({ collectionId: col.id });
-      // also include pieces tagged with collection name
       const tagged = (await listPieces({})).filter(
         (p) => (p.tags || []).includes(col.name) || (p.collectionIds || []).includes(col.id)
       );
@@ -1853,7 +2081,8 @@ async function openResplitModal(docId) {
 // ── Settings ───────────────────────────────────────────────
 
 function renderSettings(root, actions) {
-  actions.innerHTML = '';
+  actions.innerHTML = `<button type="button" class="btn" id="btn-cmd" title="⌘K">Commands</button>`;
+  $('#btn-cmd').onclick = () => openCommandPalette();
   const s = state.settings;
   root.innerHTML = `
     <div class="piece-card" style="max-width:40rem">
@@ -1865,6 +2094,24 @@ function renderSettings(root, actions) {
           <option value="light" ${s.theme === 'light' ? 'selected' : ''}>Light</option>
         </select>
       </div>
+    </div>
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem" id="vault-backup">
+      <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Vault backup</h3>
+      <p class="muted" style="margin:0 0 0.75rem">
+        Full local snapshot: documents, pieces, storyboards, collections, and settings.
+        API keys are <strong>redacted</strong> in the export unless you choose otherwise.
+        Restore replaces vault content (settings keys stay if the file has a redacted key).
+      </p>
+      <div class="piece-actions">
+        <button type="button" class="btn primary" id="vault-export">Export vault…</button>
+        <button type="button" class="btn" id="vault-import">Import vault…</button>
+      </div>
+      <label class="field check-row" style="margin-top:0.75rem">
+        <input type="checkbox" id="vault-include-secrets" />
+        Include API key in export (keep the file private)
+      </label>
+      <input type="file" id="vault-file" accept="application/json,.json" hidden />
+      <p class="dim" id="vault-status" style="margin:0.5rem 0 0"></p>
     </div>
     <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Offline split (LLM-free)</h3>
@@ -1899,7 +2146,7 @@ function renderSettings(root, actions) {
       </div>
       <div class="field">
         <label>API key (if needed)</label>
-        <input id="s-llm-key" type="password" value="${esc(s.llmApiKey || '')}" />
+        <input id="s-llm-key" type="password" value="${esc(s.llmApiKey || '')}" autocomplete="off" />
       </div>
       <div class="piece-actions">
         <button type="button" class="btn" id="s-test">Test connection</button>
@@ -1908,13 +2155,14 @@ function renderSettings(root, actions) {
     </div>
     <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.75rem">Support links (shown in app)</h3>
+      <p class="dim" style="margin:0 0 0.65rem">Leave GitHub Sponsors empty to hide it. Ko-fi defaults to the project page.</p>
       <div class="field">
-        <label>GitHub Sponsors URL</label>
-        <input id="s-gh" value="${esc(s.supportGithubSponsors || '')}" />
+        <label>GitHub Sponsors URL (optional)</label>
+        <input id="s-gh" value="${esc(s.supportGithubSponsors || '')}" placeholder="https://github.com/sponsors/…" />
       </div>
       <div class="field">
         <label>Ko-fi URL</label>
-        <input id="s-kofi" value="${esc(s.supportKofi || '')}" />
+        <input id="s-kofi" value="${esc(s.supportKofi || '')}" placeholder="https://ko-fi.com/otterlyfrank" />
       </div>
     </div>
     ${installUiHtml('full')}
@@ -1926,11 +2174,12 @@ function renderSettings(root, actions) {
 
   wireChunkControls('s');
   wireInstallButtons(root);
+  wireVaultBackup(root);
 
   $('#s-save').onclick = async () => {
     const labels = $('#s-labels')
       .value.split('\n')
-      .map((s) => s.trim())
+      .map((line) => line.trim())
       .filter(Boolean);
     const chunk = readChunkFields('s');
     state.settings = await setSettings({
@@ -1956,15 +2205,199 @@ function renderSettings(root, actions) {
   };
 }
 
+function wireVaultBackup(root) {
+  const status = $('#vault-status', root);
+  $('#vault-export', root)?.addEventListener('click', async () => {
+    try {
+      const includeSecrets = !!$('#vault-include-secrets', root)?.checked;
+      const vault = await exportVault({ includeSecrets });
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadJson(`reliquary-vault-${stamp}`, vault);
+      if (status) {
+        status.textContent = `Exported ${vault.pieces?.length || 0} pieces · ${vault.documents?.length || 0} files · ${
+          vault.storyboards?.length || 0
+        } boards${includeSecrets ? ' · includes API key' : ' · key redacted'}`;
+      }
+      toast('Vault exported', 'ok');
+    } catch (err) {
+      toast(err.message || String(err), 'err');
+    }
+  });
+  $('#vault-import', root)?.addEventListener('click', () => {
+    $('#vault-file', root)?.click();
+  });
+  $('#vault-file', root)?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (
+      !confirm(
+        'Import replaces documents, pieces, collections, and storyboards in this browser. Continue?'
+      )
+    ) {
+      return;
+    }
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const r = await importVault(payload, { keepApiKey: true });
+      state.settings = await getSettings();
+      applyTheme(state.settings.theme);
+      await reload();
+      if (status) {
+        status.textContent = `Restored ${r.pieces} pieces · ${r.documents} files · ${r.storyboards} boards · ${r.collections} collections`;
+      }
+      toast(`Vault restored · ${r.pieces} pieces`, 'ok');
+      render();
+    } catch (err) {
+      toast(err.message || 'Invalid vault file', 'err');
+    }
+  });
+}
+
 function supportBlock() {
   const s = state.settings || {};
+  const gh = String(s.supportGithubSponsors || '').trim();
+  const kofi = String(s.supportKofi || '').trim() || 'https://ko-fi.com/otterlyfrank';
+  const ghOk = gh && !/^https?:\/\/github\.com\/sponsors\/?$/i.test(gh);
   return `
     <div class="support-card">
       <h3>Support Reliquary</h3>
       <p>${esc(s.supportNote || 'Reliquary is free and open source. If it helps you excavate your work, consider supporting development.')}</p>
       <div class="support-links">
-        <a class="btn" href="${esc(s.supportGithubSponsors || 'https://github.com/sponsors')}" target="_blank" rel="noopener">GitHub Sponsors</a>
-        <a class="btn" href="${esc(s.supportKofi || 'https://ko-fi.com')}" target="_blank" rel="noopener">Ko-fi</a>
+        ${ghOk ? `<a class="btn" href="${esc(gh)}" target="_blank" rel="noopener">GitHub Sponsors</a>` : ''}
+        <a class="btn primary" href="${esc(kofi)}" target="_blank" rel="noopener">Ko-fi</a>
       </div>
     </div>`;
+}
+
+// ── Command palette (⌘K / Ctrl+K) ──────────────────────────
+
+function openCommandPalette() {
+  if (document.getElementById('cmd-backdrop')) return;
+  const go = async (view, filter) => {
+    state.view = view;
+    if (filter) state.filter = filter;
+    if (view === 'pieces' && !filter) state.filter = 'active';
+    if (view === 'storyboards') state.activeStoryboardId = null;
+    state.sidebarOpen = false;
+    state.piecePage = 0;
+    state.selected = new Set();
+    await reload();
+    render();
+  };
+  const commands = [
+    { id: 'start', label: 'Go to Start here', run: () => go('excavate') },
+    { id: 'pieces', label: 'Go to My pieces', run: () => go('pieces', 'active') },
+    { id: 'starred', label: 'Go to Starred', run: () => go('pieces', 'starred') },
+    { id: 'develop', label: 'Go to Work on later', run: () => go('pieces', 'develop') },
+    { id: 'archive', label: 'Go to Archive', run: () => go('pieces', 'archive') },
+    { id: 'boards', label: 'Go to Storyboards', run: () => go('storyboards') },
+    { id: 'sources', label: 'Go to Imported files', run: () => go('sources') },
+    { id: 'collections', label: 'Go to Collections', run: () => go('collections') },
+    { id: 'settings', label: 'Go to Settings', run: () => go('settings') },
+    {
+      id: 'export-vault',
+      label: 'Export vault backup…',
+      run: async () => {
+        await go('settings');
+        requestAnimationFrame(() => {
+          document.getElementById('vault-backup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          document.getElementById('vault-export')?.focus();
+        });
+      },
+    },
+    {
+      id: 'import-more',
+      label: 'Import more drafts',
+      run: () => go('excavate'),
+    },
+    {
+      id: 'theme',
+      label: 'Toggle light / dark theme',
+      run: async () => {
+        const next = state.settings?.theme === 'light' ? 'dark' : 'light';
+        state.settings = await setSettings({ theme: next });
+        applyTheme(next);
+        toast(`Theme: ${next}`, 'ok');
+        render();
+      },
+    },
+  ];
+  let filter = '';
+  let active = 0;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'cmd-backdrop';
+  backdrop.className = 'cmd-backdrop';
+  const close = () => backdrop.remove();
+  const filtered = () => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return commands;
+    return commands.filter((c) => c.label.toLowerCase().includes(q) || c.id.includes(q));
+  };
+  const paint = () => {
+    const list = filtered();
+    if (active >= list.length) active = Math.max(0, list.length - 1);
+    backdrop.innerHTML = `
+      <div class="cmd-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+        <input type="search" id="cmd-input" class="cmd-input" placeholder="Jump to… pieces, boards, vault…" value="${esc(
+          filter
+        )}" autocomplete="off" />
+        <div class="cmd-list" role="listbox">
+          ${
+            list
+              .map(
+                (c, i) =>
+                  `<button type="button" class="cmd-item ${i === active ? 'active' : ''}" data-cmd="${esc(
+                    c.id
+                  )}" role="option" aria-selected="${i === active}">${esc(c.label)}</button>`
+              )
+              .join('') || `<p class="dim cmd-empty">No matches</p>`
+          }
+        </div>
+        <p class="dim cmd-foot">↑↓ · Enter · Esc · ⌘K</p>
+      </div>`;
+    const input = backdrop.querySelector('#cmd-input');
+    input?.focus();
+    input?.select();
+    input?.addEventListener('input', (ev) => {
+      filter = ev.target.value;
+      active = 0;
+      paint();
+    });
+    input?.addEventListener('keydown', (ev) => {
+      const list2 = filtered();
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        active = Math.min(list2.length - 1, active + 1);
+        paint();
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        active = Math.max(0, active - 1);
+        paint();
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const cmd = list2[active];
+        if (cmd) {
+          close();
+          cmd.run();
+        }
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        close();
+      }
+    });
+    backdrop.querySelectorAll('[data-cmd]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cmd = commands.find((c) => c.id === btn.dataset.cmd);
+        close();
+        cmd?.run();
+      });
+    });
+    backdrop.addEventListener('click', (ev) => {
+      if (ev.target === backdrop) close();
+    });
+  };
+  document.body.appendChild(backdrop);
+  paint();
 }

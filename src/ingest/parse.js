@@ -25,6 +25,63 @@ const EXT_KIND = {
   rtf: 'rtf',
 };
 
+/** @type {Worker | null} */
+let textWorker = null;
+let workerSeq = 0;
+/** @type {Map<number, { resolve: Function, reject: Function }>} */
+const workerPending = new Map();
+
+function getTextWorker() {
+  if (typeof Worker === 'undefined') return null;
+  if (textWorker) return textWorker;
+  try {
+    textWorker = new Worker(new URL('./parse-worker.js', import.meta.url), { type: 'module' });
+    textWorker.onmessage = (ev) => {
+      const { id, ok, result, error } = ev.data || {};
+      const p = workerPending.get(id);
+      if (!p) return;
+      workerPending.delete(id);
+      if (ok) p.resolve(result);
+      else p.reject(new Error(error || 'Worker parse failed'));
+    };
+    textWorker.onerror = () => {
+      // Fall back to main thread on permanent worker failure
+      try {
+        textWorker?.terminate();
+      } catch {
+        /* ignore */
+      }
+      textWorker = null;
+      for (const [, p] of workerPending) {
+        p.reject(new Error('Parse worker failed'));
+      }
+      workerPending.clear();
+    };
+    return textWorker;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Off-main-thread parse for large plain text / markdown when Workers are available.
+ * @param {File} file
+ * @param {string} kind
+ * @param {ArrayBuffer} buf
+ */
+function parseTextInWorker(file, kind, buf) {
+  const w = getTextWorker();
+  if (!w) return null;
+  // Only worth it for larger drafts
+  if (buf.byteLength < 48_000) return null;
+  const id = ++workerSeq;
+  return new Promise((resolve, reject) => {
+    workerPending.set(id, { resolve, reject });
+    // Structured-clone (no transfer) so main-thread fallback still has the buffer
+    w.postMessage({ id, name: file.name || 'untitled', kind, buffer: buf });
+  });
+}
+
 /**
  * @param {File} file
  * @returns {Promise<{ name: string, kind: string, text: string, warnings: string[] }>}
@@ -42,22 +99,38 @@ export async function parseFile(file) {
   // Sniff Office zip even if extension is wrong
   const kind = sniffKind(ext, buf) || EXT_KIND[ext] || 'unknown';
 
+  // Large plain text: prefer worker so the UI can paint progress
+  if (kind === 'markdown' || kind === 'text') {
+    try {
+      const viaWorker = parseTextInWorker(file, kind, buf);
+      if (viaWorker) return await viaWorker;
+    } catch {
+      // fall through to main-thread parse (buf may have been transferred — re-read)
+    }
+  }
+
+  // Re-read if transfer emptied the buffer (worker path failed mid-flight)
+  let workBuf = buf;
+  if (!workBuf.byteLength) {
+    workBuf = await file.arrayBuffer();
+  }
+
   let text = '';
   try {
     if (kind === 'markdown' || kind === 'text') {
-      text = decodeText(buf);
+      text = decodeText(workBuf);
     } else if (kind === 'docx') {
-      text = await parseDocx(buf);
+      text = await parseDocx(workBuf);
     } else if (kind === 'odt') {
-      text = await parseOdt(buf);
+      text = await parseOdt(workBuf);
     } else if (kind === 'doc') {
-      text = parseLegacyDoc(buf);
+      text = parseLegacyDoc(workBuf);
       warnings.push('Legacy .doc is best-effort. Re-save as .docx for cleaner text.');
     } else if (kind === 'rtf') {
-      text = parseRtf(decodeText(buf));
+      text = parseRtf(decodeText(workBuf));
       warnings.push('RTF import is simplified. Prefer .docx or .md when you can.');
     } else {
-      text = decodeText(buf);
+      text = decodeText(workBuf);
       if (looksBinary(text)) {
         throw new Error(
           `“${name}” doesn’t look like a text or Word file. Try .docx, .md, or .txt.`

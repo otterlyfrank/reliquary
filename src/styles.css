@@ -1335,3 +1335,45 @@ select {
   font-size: 0.82rem;
   line-height: 1.4;
 }
+
+/* Install CTA polish (P2) */
+.pwa-install-side {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  min-height: 2.35rem;
+  white-space: nowrap;
+}
+.pwa-install-side .pwa-install-icon,
+.pwa-install-cta .pwa-install-icon {
+  flex-shrink: 0;
+}
+.pwa-install-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.6rem;
+  font-weight: 600;
+  width: 100%;
+  max-width: 28rem;
+}
+.pwa-howto-wrap {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border, rgba(128,128,128,0.25));
+}
+.pwa-ready-hint {
+  margin: 0.5rem 0 0;
+  color: var(--ok, #6a9e7a);
+  font-size: 0.85rem;
+}
+.pwa-card-flash {
+  animation: pwa-flash 1s ease;
+}
+@keyframes pwa-flash {
+  0%, 100% { box-shadow: none; }
+  40% { box-shadow: 0 0 0 2px var(--accent, #8fad8a); }
+}

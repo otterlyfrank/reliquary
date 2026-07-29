@@ -20,13 +20,31 @@ You are not installing “an app stack.” You open a vault on **your** computer
 |-----|------------|
 | Prefer double-click | Windows: `start.bat` · Mac: Terminal + `./start.sh` |
 | Prefer browser only | Yes — after the start script, everything is a normal web page |
-| Prefer a real desktop app | Coming later (`.exe` / `.dmg`) — same Reliquary, no Terminal |
+| Want it in Applications / taskbar | **Install as app** (PWA) — see below. No native binary required |
 
 Nothing is uploaded. Optional AI is off until you flip it on.
 
+**Release notes:** [CHANGELOG.md](./CHANGELOG.md)
+
 ---
 
-## Install in 60 seconds (no coding required)
+## Install as an app (recommended)
+
+Reliquary is a **Progressive Web App**. After it’s open in the browser:
+
+1. **Chrome / Edge** — install icon in the address bar, or menu → **Install Reliquary…** / **Install page as app**  
+2. **Safari (Mac)** — **File → Add to Dock…**  
+3. **iPhone / iPad** — Share → **Add to Home Screen**
+
+That puts Reliquary in Applications / Start menu and lets you **pin it to the Dock or taskbar**, in a chrome-less window.
+
+In-app: sidebar **Install app** (when offered) or **Settings → Install Reliquary**.
+
+> **Public host (later):** serve this folder on HTTPS. Visitors can try the vault in the browser, then install the same way.
+
+---
+
+## First open (local, 60 seconds)
 
 You need:
 
@@ -43,7 +61,7 @@ chmod +x start.sh
 ```
 
 Your browser should open **http://127.0.0.1:8780**.  
-If it doesn’t, open that URL yourself.
+If it doesn’t, open that URL yourself. Then use **Install as an app** above.
 
 ### Windows
 
@@ -64,17 +82,15 @@ Then open **http://127.0.0.1:8780**.
 
 > **Why a tiny server?** Browsers block some features when you open `index.html` as a raw file. Serving locally keeps everything private on your machine — nothing is uploaded.
 
-### Desktop installers (.dmg / .exe)
+### Optional: native desktop shell (Tauri)
 
-Reliquary includes a **Tauri** desktop shell (`src-tauri/`). Installers are built on GitHub Actions (no need for Rust on your laptop for CI builds).
+A **Tauri** wrapper lives in `src-tauri/` for people who want a classic `.dmg` / `.exe`. **You do not need this for normal use** — the PWA path is preferred.
 
 | Path | How |
 |------|-----|
-| **Browser (easiest)** | `./start.sh` or `start.bat` → http://127.0.0.1:8780 |
-| **Local desktop build** | Install [Rust](https://rustup.rs) + `npm install` then `npm run desktop:build` |
-| **CI installers** | Push a tag `v1.0.1` or run **Actions → Desktop installers → Run workflow** |
-
-Draft GitHub Releases will attach platform bundles when the workflow succeeds.
+| **Browser + PWA (recommended)** | `./start.sh` / `start.bat` → Install as app |
+| **Local Tauri build** | [Rust](https://rustup.rs) + `npm install` then `npm run desktop:build` |
+| **CI installers** | Tag `v1.0.1` or **Actions → Desktop installers** |
 
 ---
 

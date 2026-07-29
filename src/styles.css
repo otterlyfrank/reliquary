@@ -252,6 +252,38 @@ select {
   color: var(--accent);
 }
 
+.pwa-side-slot {
+  margin: 0.55rem 0;
+}
+
+.pwa-side-slot .pwa-install-side {
+  width: 100%;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.55rem;
+}
+
+.pwa-status {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.pwa-howto {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.15rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.pwa-howto li {
+  margin-bottom: 0.35rem;
+}
+
+.pwa-card .btn {
+  margin-top: 0.35rem;
+}
+
 /* Main */
 .main {
   display: grid;

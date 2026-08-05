@@ -1,105 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Reliquary — otter vault">
-  <defs>
-    <linearGradient id="wood" x1="12" y1="18" x2="52" y2="54" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#c48a52"/>
-      <stop offset="0.55" stop-color="#8b5a32"/>
-      <stop offset="1" stop-color="#5c3a1e"/>
-    </linearGradient>
-    <linearGradient id="gold" x1="16" y1="14" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f0d78a"/>
-      <stop offset="0.5" stop-color="#d4a84a"/>
-      <stop offset="1" stop-color="#9a6b20"/>
-    </linearGradient>
-    <linearGradient id="glow" x1="32" y1="22" x2="32" y2="36" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#ffe9a8" stop-opacity="0.95"/>
-      <stop offset="1" stop-color="#e0a840" stop-opacity="0.15"/>
-    </linearGradient>
-    <radialGradient id="ember" cx="32" cy="28" r="14" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#fff3c4" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#1a1814" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-
-  <!-- plate -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Reliquary">
+  <!-- Monogram: zoomed otter crest + vault lid — readable at 32px -->
   <rect width="64" height="64" rx="14" fill="#161310"/>
-  <rect x="1.25" y="1.25" width="61.5" height="61.5" rx="12.75" fill="none" stroke="#3a342c" stroke-width="1.5"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" fill="none" stroke="#3a342c" stroke-width="1.5"/>
 
-  <!-- ambient treasure glow -->
-  <circle cx="32" cy="30" r="16" fill="url(#ember)"/>
+  <!-- simplified open lid arc (background) -->
+  <path fill="#8b5a32" d="M10 34c0-12 9-20 22-20s22 8 22 20H10z"/>
+  <path fill="#5a2428" d="M14 34c0-9 7-15 18-15s18 6 18 15H14z"/>
+  <path fill="none" stroke="#d4a84a" stroke-width="2" d="M10 34c0-12 9-20 22-20s22 8 22 20"/>
 
-  <!-- chest body -->
-  <path fill="url(#wood)" stroke="#2a1e14" stroke-width="0.8" d="
-    M12 30
-    H52
-    V48
-    C52 51 49.5 53 46.5 53
-    H17.5
-    C14.5 53 12 51 12 48
-    Z"/>
-  <!-- gold band -->
-  <path fill="#c9a24a" opacity="0.95" d="M12 44.5 H52 V47 H12 Z"/>
-  <path fill="none" stroke="#f0d78a" stroke-width="0.6" opacity="0.5" d="M14 45.8 H50"/>
+  <!-- gold glow coins -->
+  <ellipse cx="32" cy="30" rx="12" ry="5" fill="#f0d070" opacity="0.85"/>
+  <circle cx="26" cy="29" r="2.5" fill="#e8c060"/>
+  <circle cx="32" cy="28" r="3" fill="#f5e090"/>
+  <circle cx="38" cy="29.5" r="2.3" fill="#d4a84a"/>
 
-  <!-- open lid -->
-  <path fill="url(#wood)" stroke="#2a1e14" stroke-width="0.8" d="
-    M12 30
-    C12 22 18 15 32 14.5
-    C46 15 52 22 52 30
-    L48 30
-    C48 24 42 19 32 18.5
-    C22 19 16 24 16 30
-    Z"/>
-  <!-- lid underside (red velvet hint) -->
-  <path fill="#5a2428" opacity="0.85" d="
-    M16 30
-    C16 24 22 19.5 32 19
-    C42 19.5 48 24 48 30
-    Z"/>
-  <!-- gold lid edge -->
-  <path fill="none" stroke="#d4a84a" stroke-width="1.4" d="
-    M13 30 C13 22.5 19 16 32 15.5 C45 16 51 22.5 51 30"/>
-
-  <!-- treasure glow + coins -->
-  <ellipse cx="32" cy="28" rx="11" ry="5" fill="url(#glow)"/>
-  <circle cx="27" cy="27.5" r="2.1" fill="#e8c060"/>
-  <circle cx="32" cy="26.5" r="2.4" fill="#f0d070"/>
-  <circle cx="37" cy="27.8" r="1.9" fill="#d4a84a"/>
-  <circle cx="30" cy="29.2" r="1.5" fill="#f5e090"/>
-  <!-- tiny gem -->
-  <path fill="#7ec8e8" d="M35.5 25.5 L36.5 27.5 L35.5 28.2 L34.5 27.5 Z" opacity="0.9"/>
-
-  <!-- otter crest (character) -->
-  <ellipse cx="32" cy="40.5" rx="9.5" ry="6.2" fill="#6b4630"/>
-  <!-- belly -->
-  <ellipse cx="33.5" cy="41.2" rx="4.2" ry="3.4" fill="#e8d4b8"/>
+  <!-- BIG otter crest (hero of monogram) -->
+  <ellipse cx="32" cy="46" rx="16" ry="10" fill="#6b4630"/>
+  <ellipse cx="34" cy="47" rx="7" ry="5.5" fill="#e8d4b8"/>
   <!-- head -->
-  <circle cx="38.2" cy="38.8" r="3.6" fill="#7a5238"/>
-  <ellipse cx="39" cy="39.2" rx="2.2" ry="2" fill="#e8d4b8"/>
-  <!-- snout -->
-  <ellipse cx="40.8" cy="39.6" rx="1.4" ry="1.1" fill="#f0e0c8"/>
-  <circle cx="41.4" cy="39.5" r="0.45" fill="#2a1a10"/>
-  <!-- eyes (spark of character) -->
-  <circle cx="37.6" cy="38.2" r="0.85" fill="#1a1410"/>
-  <circle cx="39.3" cy="38.1" r="0.85" fill="#1a1410"/>
-  <circle cx="37.9" cy="37.95" r="0.3" fill="#fff8e8"/>
-  <circle cx="39.55" cy="37.85" r="0.3" fill="#fff8e8"/>
-  <!-- smile -->
-  <path d="M38.8 40.2 C39.4 40.7 40.4 40.7 41 40.2" fill="none" stroke="#5a3820" stroke-width="0.55" stroke-linecap="round"/>
-  <!-- ear -->
-  <ellipse cx="36.2" cy="36.6" rx="1.1" ry="1.4" fill="#6b4630"/>
-  <!-- tail curl -->
-  <path d="M23.5 41 C21.5 39 22 36.5 24.5 36.2 C26 36 26.5 37.5 25.5 38.5 C24.2 39.8 24.5 41.5 26 42"
-        fill="none" stroke="#6b4630" stroke-width="2.2" stroke-linecap="round"/>
-  <!-- whiskers -->
-  <path d="M41.2 39.2 H43.2 M41 40 H42.8" stroke="#c4a888" stroke-width="0.45" stroke-linecap="round" opacity="0.85"/>
-
-  <!-- floating scrap (writing archaeology) -->
-  <path fill="#e8dcc4" opacity="0.9" transform="rotate(-18 48 18)" d="M45 15 h7 v5.5 h-7 z"/>
-  <path stroke="#b8a888" stroke-width="0.4" opacity="0.7" transform="rotate(-18 48 18)" d="M46.2 16.5 h4.5 M46.2 17.8 h3.8 M46.2 19.1 h4"/>
-  <path fill="#e8dcc4" opacity="0.75" transform="rotate(22 16 20)" d="M13 18 h5.5 v4 h-5.5 z"/>
-
-  <!-- sparkles -->
-  <circle cx="44" cy="24" r="0.9" fill="#f5e090"/>
-  <circle cx="20" cy="26" r="0.7" fill="#f0d78a" opacity="0.85"/>
-  <path d="M46 16 L46.5 17.5 L48 18 L46.5 18.5 L46 20 L45.5 18.5 L44 18 L45.5 17.5 Z" fill="#ffe9a8" opacity="0.9"/>
+  <circle cx="42" cy="42" r="7.5" fill="#7a5238"/>
+  <ellipse cx="43.5" cy="43" rx="4.5" ry="4" fill="#e8d4b8"/>
+  <ellipse cx="46" cy="44" rx="2.4" ry="1.8" fill="#f0e0c8"/>
+  <circle cx="47" cy="43.8" r="0.9" fill="#1a1410"/>
+  <!-- eyes -->
+  <circle cx="40.5" cy="41" r="1.6" fill="#1a1410"/>
+  <circle cx="44.2" cy="41" r="1.6" fill="#1a1410"/>
+  <circle cx="41" cy="40.6" r="0.55" fill="#fff8e8"/>
+  <circle cx="44.7" cy="40.6" r="0.55" fill="#fff8e8"/>
+  <path d="M42.5 45.5c1 0.9 2.8 0.9 3.8 0" fill="none" stroke="#5a3820" stroke-width="1" stroke-linecap="round"/>
+  <!-- tail -->
+  <path d="M16 46c-3-3-2-8 2-9 2.5-.5 3.5 2 2 3.5-2 2-1.5 5 1 6" fill="none" stroke="#6b4630" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- spark -->
+  <circle cx="50" cy="20" r="1.6" fill="#f5e090"/>
 </svg>

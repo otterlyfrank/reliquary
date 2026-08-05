@@ -1,5 +1,5 @@
 /* Reliquary service worker — shell cache for installability + offline reopen */
-const CACHE = 'reliquary-shell-v2';
+const CACHE = 'reliquary-shell-v3';
 
 const PRECACHE = [
   './',
@@ -17,8 +17,11 @@ const PRECACHE = [
   './src/lib/yield.js',
   './public/reliquary-otter-lego.jpg',
   './public/reliquary-mark.svg',
+  './public/reliquary-mark.png',
+  './public/reliquary-icon-hero.jpg',
   './public/icon-192.png',
   './public/icon-512.png',
+  './public/apple-touch-icon.png',
   './manifest.webmanifest',
 ];
 

@@ -217,7 +217,7 @@ function buildShell() {
     <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
     <aside class="sidebar ${state.sidebarOpen ? 'open' : ''}" id="sidebar" aria-label="Sidebar">
       <div class="brand">
-        <img class="brand-mark" src="./public/reliquary-mark.svg" alt="" width="48" height="48" />
+        <img class="brand-mark" src="./public/reliquary-mark.png" alt="Reliquary — otter vault" width="48" height="48" />
         <div>
           <h1>Reliquary</h1>
           <p>Your draft vault</p>
@@ -809,7 +809,7 @@ function renderPieces(root, actions) {
               : ''
           }`
         : `<div class="empty">
-            <img class="empty-art" src="./public/reliquary-mark.svg" alt="" />
+            <img class="empty-art" src="./public/reliquary-mark.png" alt="" />
             <h3>Nothing here yet</h3>
             <p>Go to <strong>Start here</strong> and open an old draft. We’ll break it into readable pieces.</p>
           </div>`

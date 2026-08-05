@@ -77,9 +77,20 @@ select {
   grid-column: 1 / -1;
   display: grid;
   place-content: center;
+  place-items: center;
   gap: 0.5rem;
   text-align: center;
   min-height: 100vh;
+}
+
+.boot-logo {
+  width: 7.5rem;
+  height: 7.5rem;
+  border-radius: 18px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  margin: 0 auto 0.35rem;
 }
 
 .boot-mark {

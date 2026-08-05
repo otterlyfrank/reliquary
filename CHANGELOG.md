@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.2 — 2026-08-05
+
+### Icon rework — more otter character
+
+- App icons (192 / 512 / apple-touch) rebuilt from the LEGO otter vault with a friendlier otter, gold glow, and floating manuscript scraps
+- Sidebar / boot mark uses the characterful PNG; SVG monogram redrawn with otter crest + vault + parchment
+- Full hero still available as `public/reliquary-icon-hero.jpg` (museum LEGO art stays at `reliquary-otter-lego.jpg`)
+- Service worker → **reliquary-shell-v3**
+
 ## 1.2.1 — 2026-07-29
 
 ### Fixes

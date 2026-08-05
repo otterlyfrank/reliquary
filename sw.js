@@ -1,5 +1,5 @@
 /* Reliquary service worker — shell cache for installability + offline reopen */
-const CACHE = 'reliquary-shell-v3';
+const CACHE = 'reliquary-shell-v4';
 
 const PRECACHE = [
   './',

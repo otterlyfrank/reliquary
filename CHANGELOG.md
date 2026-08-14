@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 — 2026-08-14
+
+### UX: quieter desk
+
+- After the first import, nav says **Import** (not “Start here”)
+- `/` focuses piece search; Esc closes the reading modal
+- Empty sources list has an import button
+
 ## 1.3.0 — 2026-08-14
 
 ### Desk memory + empty-shelf UX

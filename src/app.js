@@ -156,6 +156,7 @@ function openHelp() {
       <p class="muted">The vault stays on this computer. Nothing is uploaded unless you turn AI on.</p>
       <table class="help-table">
         <tr><td><kbd>⌘</kbd><kbd>K</kbd></td><td>Command palette</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Search pieces</td></tr>
         <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Close drawers and dialogs</td></tr>
         <tr><td>⌥↑ / ⌥↓</td><td>Reorder a storyboard item</td></tr>
@@ -176,6 +177,20 @@ function wireGlobalKeys() {
   window.addEventListener('keydown', (e) => {
     const tag = (e.target && e.target.tagName) || '';
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(tag);
+    if (e.key === '/' && !inField) {
+      e.preventDefault();
+      const search = $('#q');
+      if (search) {
+        search.focus();
+        search.select?.();
+      } else {
+        state.view = 'pieces';
+        persistSession();
+        render();
+        requestAnimationFrame(() => $('#q')?.focus());
+      }
+      return;
+    }
     if (e.key === '?' && !inField) {
       e.preventDefault();
       if ($('#reliquary-help')) $('#reliquary-help').remove();
@@ -295,7 +310,7 @@ function buildShell() {
           <p>Your draft vault</p>
         </div>
       </div>
-      ${navBtn('excavate', 'Start here')}
+      ${navBtn('excavate', state.documents?.length ? 'Import' : 'Start here')}
       ${navBtn('pieces', 'My pieces', 'active')}
       ${navBtn('storyboards', 'Storyboards')}
       ${navBtn('sources', 'Imported files')}
@@ -422,7 +437,7 @@ function render(opts = {}) {
 }
 
 function viewTitle() {
-  if (state.view === 'excavate') return 'Start here';
+  if (state.view === 'excavate') return state.documents?.length ? 'Import' : 'Start here';
   if (state.view === 'storyboards') {
     if (state.activeStoryboardId) {
       const b = state.storyboards.find((s) => s.id === state.activeStoryboardId);
@@ -475,9 +490,9 @@ function excavationRibbonHtml() {
 function renderExcavate(root, actions) {
   const isFirstRun = !state.documents.length;
   actions.innerHTML = `
-    ${isFirstRun ? `<button type="button" class="btn" id="btn-sample">Try a sample</button>` : ''}
-    <button type="button" class="btn" id="btn-folder">Whole folder</button>
     <button type="button" class="btn primary" id="btn-files">Choose files</button>
+    <button type="button" class="btn" id="btn-folder">Whole folder</button>
+    ${isFirstRun ? `<button type="button" class="btn" id="btn-sample">Try a sample</button>` : ''}
   `;
   root.innerHTML = `
     ${
@@ -1227,6 +1242,12 @@ async function openReading(id) {
       if (e.target === backdrop) close();
     };
     $('#r-close', backdrop).onclick = close;
+    if (!bindReading._esc) {
+      bindReading._esc = true;
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && backdrop.isConnected) close();
+      });
+    }
     $('#r-prev', backdrop).onclick = () => {
       if (idx > 0) {
         idx--;
@@ -2102,7 +2123,16 @@ function renderSources(root, actions) {
         <strong>Re-split offline</strong> replaces this source’s pieces using your current split settings
         (sentence / paragraph / page, etc.). Starred pieces from this source are kept only if you cancel — re-split starts clean.
       </p>`
-    : `<div class="empty"><h3>No files imported yet</h3><p>Go to <strong>Start here</strong> and choose a draft.</p></div>`;
+    : `<div class="empty">
+        <h3>No files imported yet</h3>
+        <p>Bring in a draft — Word, text, or Markdown.</p>
+        <p><button type="button" class="btn primary" id="src-import">Import drafts</button></p>
+      </div>`;
+  $('#src-import')?.addEventListener('click', () => {
+    state.view = 'excavate';
+    persistSession();
+    render();
+  });
   root.querySelectorAll('[data-del-doc]').forEach((btn) => {
     btn.onclick = async () => {
       if (!confirm('Delete this source and all its pieces?')) return;

@@ -89,13 +89,48 @@ let state = {
 };
 
 const PIECES_PER_PAGE = 48;
+const SESSION_KEY = 'reliquary:session';
 
 let rootEl = null;
 let shellBuilt = false;
 
+function persistSession() {
+  try {
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        view: state.view,
+        filter: state.filter,
+        q: state.q,
+        label: state.label,
+        cardDensity: state.cardDensity,
+        sbDense: state.sbDense,
+      })
+    );
+  } catch {
+    /* private mode */
+  }
+}
+
+function restoreSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+    if (!s || typeof s !== 'object') return;
+    if (s.view) state.view = s.view;
+    if (s.filter) state.filter = s.filter;
+    if (typeof s.q === 'string') state.q = s.q;
+    if (typeof s.label === 'string') state.label = s.label;
+    if (s.cardDensity) state.cardDensity = s.cardDensity;
+    if (typeof s.sbDense === 'boolean') state.sbDense = s.sbDense;
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function mountApp(root) {
   rootEl = root;
   try {
+    restoreSession();
     state.settings = await getSettings();
     applyTheme(state.settings.theme);
     await reload();
@@ -110,10 +145,47 @@ export async function mountApp(root) {
   }
 }
 
+function openHelp() {
+  if ($('#reliquary-help')) return;
+  const host = document.createElement('div');
+  host.id = 'reliquary-help';
+  host.className = 'modal-backdrop';
+  host.innerHTML = `
+    <div class="modal" role="dialog" aria-labelledby="rq-help-title">
+      <h2 id="rq-help-title">Shortcuts</h2>
+      <p class="muted">The vault stays on this computer. Nothing is uploaded unless you turn AI on.</p>
+      <table class="help-table">
+        <tr><td><kbd>⌘</kbd><kbd>K</kbd></td><td>Command palette</td></tr>
+        <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close drawers and dialogs</td></tr>
+        <tr><td>⌥↑ / ⌥↓</td><td>Reorder a storyboard item</td></tr>
+      </table>
+      <div class="modal-actions"><button type="button" class="btn primary" id="rq-help-close">Close</button></div>
+    </div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.addEventListener('click', (e) => {
+    if (e.target === host) close();
+  });
+  $('#rq-help-close', host).onclick = close;
+}
+
 function wireGlobalKeys() {
   if (wireGlobalKeys._bound) return;
   wireGlobalKeys._bound = true;
   window.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName) || '';
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(tag);
+    if (e.key === '?' && !inField) {
+      e.preventDefault();
+      if ($('#reliquary-help')) $('#reliquary-help').remove();
+      else openHelp();
+      return;
+    }
+    if (e.key === 'Escape' && $('#reliquary-help')) {
+      $('#reliquary-help').remove();
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       openCommandPalette();
@@ -377,6 +449,7 @@ function bindNav() {
       state.selected = new Set();
       state.sidebarOpen = false;
       state.piecePage = 0;
+      persistSession();
       await reload();
       render();
     });
@@ -719,6 +792,7 @@ async function ingestFiles(files) {
     state.view = 'pieces';
     state.filter = 'active';
     state.piecePage = 0;
+    persistSession();
     await reload();
     render();
     if (problems.length) {
@@ -761,6 +835,7 @@ function renderPieces(root, actions) {
   };
   $('#btn-density').onclick = () => {
     state.cardDensity = dense ? 'comfortable' : 'compact';
+    persistSession();
     render();
   };
   $('#btn-select-all').onclick = () => {
@@ -810,8 +885,14 @@ function renderPieces(root, actions) {
           }`
         : `<div class="empty">
             <img class="empty-art" src="./public/reliquary-mark.png" alt="" />
-            <h3>Nothing here yet</h3>
-            <p>Go to <strong>Start here</strong> and open an old draft. We’ll break it into readable pieces.</p>
+            <h3>${state.q || state.label ? 'No pieces match' : 'Nothing on this shelf'}</h3>
+            <p>${
+              state.q || state.label
+                ? 'Clear search or labels, or import another draft.'
+                : 'Bring in an old draft — we’ll split it into pieces you can actually read.'
+            }</p>
+            <p><button type="button" class="btn primary" id="empty-import">Import drafts</button>
+            ${state.q || state.label ? '<button type="button" class="btn" id="empty-clear">Clear filters</button>' : ''}</p>
           </div>`
     }
     ${
@@ -838,11 +919,24 @@ function renderPieces(root, actions) {
     state.lastExcavation = null;
     render();
   });
+  $('#empty-import')?.addEventListener('click', () => {
+    state.view = 'excavate';
+    persistSession();
+    render();
+  });
+  $('#empty-clear')?.addEventListener('click', async () => {
+    state.q = '';
+    state.label = '';
+    persistSession();
+    await reload();
+    render();
+  });
   root.querySelectorAll('[data-shelf]').forEach((btn) => {
     btn.onclick = async () => {
       state.filter = btn.dataset.shelf;
       state.piecePage = 0;
       state.selected = new Set();
+      persistSession();
       await reload();
       render();
     };
@@ -859,6 +953,7 @@ function renderPieces(root, actions) {
     if (e.key === 'Enter') {
       state.q = e.target.value.trim();
       state.piecePage = 0;
+      persistSession();
       await reload();
       render();
     }
@@ -866,6 +961,7 @@ function renderPieces(root, actions) {
   root.querySelectorAll('[data-label]').forEach((btn) => {
     btn.onclick = async () => {
       state.label = btn.dataset.label || '';
+      persistSession();
       await reload();
       render();
     };

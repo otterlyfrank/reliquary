@@ -930,6 +930,32 @@ select {
   margin-top: 1rem;
 }
 
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.help-table td {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.help-table td:first-child {
+  width: 42%;
+  white-space: nowrap;
+}
+
+.help-table kbd {
+  display: inline-block;
+  min-width: 1.2em;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-soft);
+  font-size: 0.78rem;
+}
+
 .field {
   display: flex;
   flex-direction: column;

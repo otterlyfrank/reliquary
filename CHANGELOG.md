@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 — 2026-08-14
+
+### Desk memory + empty-shelf UX
+
+- Last view, search, label, and card density persist across refresh
+- Empty shelves explain *why* they’re empty and offer **Import drafts** / **Clear filters**
+- `?` opens a short shortcuts sheet (⌘K still opens the palette)
+- Service worker cache **v6** so installed apps pick up the shell
+
 ## 1.2.2 — 2026-08-05
 
 ### Icon rework — more otter character

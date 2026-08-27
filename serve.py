@@ -10,6 +10,7 @@ import errno
 import json
 import os
 import posixpath
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -85,9 +86,38 @@ def ollama_up() -> bool:
     return 200 <= code < 300
 
 
+def app_version_info() -> dict:
+    version = ""
+    pkg = ROOT / "package.json"
+    if pkg.is_file():
+        try:
+            version = str(json.loads(pkg.read_text(encoding="utf-8")).get("version") or "")
+        except Exception:
+            version = ""
+    git = ""
+    try:
+        git = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ROOT,
+                timeout=1.5,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("ascii", "replace")
+            .strip()
+        )
+    except Exception:
+        git = ""
+    return {"ok": True, "name": "reliquary", "version": version, "git": git}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        super().end_headers()
 
     def log_message(self, fmt: str, *args) -> None:
         # Never print request bodies / prompts.
@@ -142,8 +172,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not found")
             return
         parsed = urlparse(self.path)
-        if parsed.path in ("/health", "/api/health"):
-            self._json(200, {"ok": True})
+        if parsed.path in ("/health", "/api/health", "/api/version"):
+            self._json(200, app_version_info())
             return
         if parsed.path == "/api/llm/status":
             self.handle_status()
@@ -177,6 +207,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "baseUrl": XAI_BASE,
                     "keySource": "env" if key else None,
                 },
+                **{k: v for k, v in app_version_info().items() if k != "ok"},
             },
         )
 

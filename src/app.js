@@ -71,7 +71,7 @@ import {
   storyboardToMarkdown,
   formatDate,
 } from './lib/export.js';
-import { installUiHtml, wireInstallButtons } from './pwa.js';
+import { installUiHtml, wireInstallButtons, paintAppVersion } from './pwa.js';
 import { yieldToMain } from './lib/yield.js';
 
 /** @type {any} */
@@ -342,6 +342,7 @@ function buildShell() {
       </details>
       <div class="sidebar-foot">
         <p>Stays on your computer · free</p>
+        <p class="dim" data-app-version style="margin:0.2rem 0 0;font-size:0.78rem"></p>
         <div class="pwa-side-slot">${installUiHtml('compact')}</div>
         <p><a href="#support" data-nav="settings">Support Reliquary</a></p>
       </div>
@@ -428,6 +429,7 @@ function updateShellChrome() {
   if (bd) bd.hidden = !state.sidebarOpen;
   const pwa = $('.pwa-side-slot');
   if (pwa) pwa.innerHTML = installUiHtml('compact');
+  paintAppVersion();
 }
 
 function render(opts = {}) {

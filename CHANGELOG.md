@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1 — 2026-08-27
+
+### Installed app actually updates
+
+A GitHub push does not change the Dock/PWA window by itself — that window loads `http://127.0.0.1:8780` and Chromium was keeping a cached service worker.
+
+- Static files and `sw.js` are served with `Cache-Control: no-store`
+- The service worker fetches with `cache: 'no-store'`, checks for updates on focus, and reloads once a new worker takes over
+- Sidebar shows `v… · git` from `/api/version` so you can see you are on the commit you pulled
+- `./start.sh` (and the Otterly suite launcher) pull GitHub when the tree is clean, then restart
+
+Quit/reopen Reliquary after `git pull` or `update-apps.sh`. Hard-refresh still works.
+
 ## 1.4.0 — 2026-08-27
 
 ### First-class Ollama + xAI (private-enough cloud)

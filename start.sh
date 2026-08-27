@@ -10,6 +10,17 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+GIT_UPDATED=0
+if [[ "${SKIP_GIT_PULL:-0}" != "1" && -d .git ]]; then
+  SUITE_PULL="$(cd "$(dirname "$0")/../otterly-suite" 2>/dev/null && pwd)/git-pull.sh"
+  if [[ -f "$SUITE_PULL" ]]; then
+    # shellcheck disable=SC1090
+    source "$SUITE_PULL"
+    otterly_git_pull "."
+    GIT_UPDATED="${OTTERLY_GIT_UPDATED:-0}"
+  fi
+fi
+
 already_proxy() {
   curl -sS --max-time 0.6 "${URL}api/llm/status" 2>/dev/null | grep -q '"proxy": true'
 }
@@ -25,13 +36,16 @@ open_page() {
   fi
 }
 
-if already_proxy; then
+if already_proxy && [[ "${GIT_UPDATED}" != "1" ]]; then
   echo ""
   echo "  Reliquary is already running"
   echo "  Open: ${URL}"
   echo ""
   open_page
   exit 0
+fi
+if already_proxy && [[ "${GIT_UPDATED}" == "1" ]]; then
+  echo "  New GitHub commit on disk — restarting Reliquary."
 fi
 
 # Take over a stale python -m http.server (or hung listener) on our port.

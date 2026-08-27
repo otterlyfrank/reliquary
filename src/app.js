@@ -9,6 +9,7 @@ import {
   putPiece,
   updatePiece,
   deletePiece,
+  deletePiecesByDocument,
   putPiecesBulk,
   putDocument,
   listDocuments,
@@ -32,11 +33,13 @@ import {
 import {
   parseFile,
   isSupportedFile,
+  skipReason,
   SUPPORTED_EXTENSIONS,
   formatHelpLine,
 } from './ingest/parse.js';
 import {
   chunkDocument,
+  isJunkPiece,
   buildAiChunkPrompt,
   resolveChunkOptions,
   describeChunkOptions,
@@ -44,7 +47,22 @@ import {
   CHUNK_UNITS,
   CHUNK_SIZE_PRESETS,
 } from './chunk/engine.js';
-import { chatCompletion, checkLlm, developPrompt, parseJsonArray } from './ai/client.js';
+import {
+  chatFromSettings,
+  checkLlm,
+  developPrompt,
+  parseJsonArray,
+  llmEnabled,
+  inferProvider,
+  listLlmModels,
+  getProxyStatus,
+  ollamaSizeWarning,
+  pickOllamaDefault,
+  LLM_PROVIDERS,
+  XAI_MODELS,
+  XAI_DEFAULT_MODEL,
+  OLLAMA_DEFAULT_HOST,
+} from './ai/client.js';
 import {
   downloadText,
   downloadJson,
@@ -479,7 +497,7 @@ function excavationRibbonHtml() {
       <strong>Unearthed ${r.pieces} piece${r.pieces === 1 ? '' : 's'}</strong>
       <span class="dim"> · ${r.files} file${r.files === 1 ? '' : 's'}${
         r.skipped ? ` · ${r.skipped} skipped` : ''
-      }</span>
+      }${r.note ? ` · ${r.note}` : ''}</span>
     </div>
     <button type="button" class="btn ghost" id="ribbon-dismiss" aria-label="Dismiss">Dismiss</button>
   </div>`;
@@ -490,8 +508,8 @@ function excavationRibbonHtml() {
 function renderExcavate(root, actions) {
   const isFirstRun = !state.documents.length;
   actions.innerHTML = `
-    <button type="button" class="btn primary" id="btn-files">Choose files</button>
-    <button type="button" class="btn" id="btn-folder">Whole folder</button>
+    <button type="button" class="btn primary" id="btn-folder">Whole folder</button>
+    <button type="button" class="btn" id="btn-files">Choose files</button>
     ${isFirstRun ? `<button type="button" class="btn" id="btn-sample">Try a sample</button>` : ''}
   `;
   root.innerHTML = `
@@ -503,7 +521,7 @@ function renderExcavate(root, actions) {
               <h3>Welcome — this is your vault for unfinished writing</h3>
               <p class="muted">Everything stays on <strong>your</strong> computer. Nothing is uploaded. Dusty Word docs, half-novels, Notes exports: this is for that pile.</p>
               <ol class="how-to">
-                <li><strong>Bring files in</strong> — choose, drag, or try the sample</li>
+                <li><strong>Open your drafts folder</strong> — one click, or drop the folder on the box</li>
                 <li>We split them into small <strong>pieces</strong> you can actually read</li>
                 <li>Star the gold · stack keepers on a <strong>Storyboard</strong></li>
               </ol>
@@ -513,20 +531,21 @@ function renderExcavate(root, actions) {
         : ''
     }
     <div class="drop-zone" id="drop">
-      <h3>${isFirstRun ? 'Drop old drafts here' : 'Bring more drafts in'}</h3>
-      <p class="muted">Drag files onto this box, or use the buttons. One file or a whole mess of folders is fine.</p>
+      <h3>${isFirstRun ? 'Drop your drafts folder here' : 'Bring more drafts in'}</h3>
+      <p class="muted">Drop the whole folder (nested Word docs are fine), or use <strong>Whole folder</strong>. Everything stays on this computer.</p>
       <p class="dim" style="margin-top:0.75rem">${esc(formatHelpLine())}</p>
       <div style="margin-top:1rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
-        <button type="button" class="btn primary" id="btn-files-2">Choose files</button>
-        <button type="button" class="btn" id="btn-folder-2">Whole folder</button>
+        <button type="button" class="btn primary" id="btn-folder-2">Whole folder</button>
+        <button type="button" class="btn" id="btn-files-2">Choose files</button>
         ${isFirstRun ? `<button type="button" class="btn" id="btn-sample-2">Try a sample</button>` : ''}
       </div>
     </div>
     <div class="import-tips">
       <h4>Quick tips</h4>
       <ul>
+        <li><strong>Whole folder:</strong> pick the folder where all the drafts live. Subfolders are included (up to a few levels).</li>
         <li><strong>Word:</strong> .docx is best. Old .doc works roughly — “Save As → .docx” if text looks weird.</li>
-        <li><strong>Not yet:</strong> PDF scans (images of pages). Export text from Word/Google Docs first.</li>
+        <li><strong>PDF:</strong> text PDFs import. Photo-scans of pages still need a Word/text export.</li>
         <li><strong>After import:</strong> you’ll land in <strong>My pieces</strong>. Nothing leaves your machine.</li>
       </ul>
     </div>
@@ -577,18 +596,20 @@ function renderExcavate(root, actions) {
     drop.classList.add('drag');
   });
   drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
-  drop.addEventListener('drop', (e) => {
+  drop.addEventListener('drop', async (e) => {
     e.preventDefault();
     drop.classList.remove('drag');
-    const all = [...e.dataTransfer.files];
-    const files = all.filter(isSupportedFile);
-    const skipped = all.length - files.length;
-    if (skipped > 0 && !files.length) {
-      toast(`None of those ${all.length} file(s) are supported yet. Use Word, text, or Markdown.`, 'err');
-      return;
+    try {
+      const files = await filesFromDataTransfer(e.dataTransfer);
+      if (!files.length) {
+        toast('No Word / text / Markdown / HTML / PDF-text drafts in that drop. Try Whole folder.', 'err');
+        return;
+      }
+      await ingestFiles(files, { skippedBag: files.skippedBag });
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      toast(err.message || 'Could not read that folder', 'err');
     }
-    if (skipped > 0) toast(`Skipping ${skipped} unsupported file(s)`, '');
-    ingestFiles(files);
   });
 }
 
@@ -604,56 +625,275 @@ async function ingestSampleDraft() {
   }
 }
 
+const SKIP_DIR_NAMES = new Set([
+  'node_modules',
+  '.git',
+  '__macosx',
+  '.trash',
+  '.ds_store',
+  'library',
+]);
+
+const FOLDER_MAX_DEPTH = 8;
+
+function tagReliquaryPath(file, relPath) {
+  const path = String(relPath || file.webkitRelativePath || file.name || '').replace(/\\/g, '/');
+  try {
+    Object.defineProperty(file, 'reliquaryPath', { value: path, enumerable: true });
+  } catch {
+    file.reliquaryPath = path;
+  }
+  return file;
+}
+
+function emptySkipBag() {
+  return { pdf: 0, pages: 0, image: 0, junk: 0, archive: 0, other: 0 };
+}
+
+function noteSkip(bag, why) {
+  if (!bag) return;
+  const key = bag[why] != null ? why : 'other';
+  bag[key] += 1;
+}
+
+function skipBagNote(bag) {
+  if (!bag) return '';
+  const bits = [];
+  if (bag.pdf) bits.push(`${bag.pdf} PDF scan/other`);
+  if (bag.pages) bits.push(`${bag.pages} Pages`);
+  if (bag.image) bits.push(`${bag.image} image`);
+  if (bag.archive) bits.push(`${bag.archive} archive`);
+  if (bag.junk) bits.push(`${bag.junk} junk`);
+  if (bag.other) bits.push(`${bag.other} other`);
+  return bits.join(', ');
+}
+
+function considerWalkedFile(file, rel, files, bag) {
+  const tagged = tagReliquaryPath(file, rel);
+  const why = skipReason(tagged);
+  if (why) {
+    noteSkip(bag, why);
+    return;
+  }
+  if (isSupportedFile(tagged)) files.push(tagged);
+  else noteSkip(bag, 'other');
+}
+
+function shouldSkipDir(name) {
+  const n = String(name || '').toLowerCase();
+  return !n || n.startsWith('.') || SKIP_DIR_NAMES.has(n);
+}
+
+async function confirmLargeImport(files) {
+  if (files.length < 200) return true;
+  return window.confirm(
+    `Found ${files.length} drafts in that folder. Import all of them? Everything stays on this computer.`
+  );
+}
+
 async function importFolder() {
   try {
     if (window.showDirectoryPicker) {
       const dir = await window.showDirectoryPicker();
-      const files = [];
-      for await (const entry of walkDir(dir, 0, 3)) {
-        if (entry.kind === 'file') {
-          const f = await entry.getFile();
-          if (isSupportedFile(f)) files.push(f);
-        }
-      }
+      toast('Looking through the folder…');
+      const bag = emptySkipBag();
+      const files = await filesFromDirHandle(dir, '', 0, bag);
       if (!files.length) {
-        toast('No supported drafts in that folder', 'err');
+        toast(
+          bag && skipBagNote(bag)
+            ? `No importable drafts. Skipped: ${skipBagNote(bag)}.`
+            : 'No Word / text / Markdown / HTML / PDF-text drafts in that folder',
+          'err'
+        );
         return;
       }
-      await ingestFiles(files);
+      if (!(await confirmLargeImport(files))) return;
+      await ingestFiles(files, { skippedBag: bag });
       return;
     }
   } catch (err) {
     if (err?.name === 'AbortError') return;
     console.warn(err);
   }
-  // Fallback: webkitdirectory
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
   input.webkitdirectory = true;
-  input.onchange = () => {
-    const files = [...input.files].filter(isSupportedFile);
+  input.onchange = async () => {
+    const bag = emptySkipBag();
+    const files = [];
+    for (const f of input.files) {
+      if (String(f.webkitRelativePath || '').split('/').some(shouldSkipDir)) continue;
+      considerWalkedFile(f, f.webkitRelativePath || f.name, files, bag);
+    }
     if (!files.length) {
-      toast('No supported drafts in that folder', 'err');
+      toast('No importable drafts in that folder', 'err');
       return;
     }
-    ingestFiles(files);
+    if (!(await confirmLargeImport(files))) return;
+    ingestFiles(files, { skippedBag: bag });
   };
   input.click();
 }
 
-/** Walk folder tree up to maxDepth (0 = this folder only). */
-async function* walkDir(dirHandle, depth = 0, maxDepth = 3) {
-  for await (const entry of dirHandle.values()) {
-    if (entry.kind === 'file') yield entry;
-    else if (entry.kind === 'directory' && depth < maxDepth) {
-      try {
-        yield* walkDir(entry, depth + 1, maxDepth);
-      } catch {
-        /* ignore locked subfolders */
+async function filesFromDirHandle(dirHandle, prefix = '', depth = 0, bag = null) {
+  const files = [];
+  for await (const [name, entry] of dirHandle.entries()) {
+    if (shouldSkipDir(name) && entry.kind === 'directory') continue;
+    if (name.startsWith('.')) continue;
+    try {
+      if (entry.kind === 'file') {
+        const f = await entry.getFile();
+        const rel = prefix ? `${prefix}/${name}` : name;
+        considerWalkedFile(f, rel, files, bag);
+      } else if (entry.kind === 'directory' && depth < FOLDER_MAX_DEPTH) {
+        const next = prefix ? `${prefix}/${name}` : name;
+        files.push(...(await filesFromDirHandle(entry, next, depth + 1, bag)));
       }
+    } catch {
+      /* locked / permission */
     }
   }
+  return files;
+}
+
+function readAllDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => {
+    const all = [];
+    const pump = () => {
+      reader.readEntries((batch) => {
+        if (!batch.length) return resolve(all);
+        all.push(...batch);
+        pump();
+      }, reject);
+    };
+    pump();
+  });
+}
+
+async function collectDroppedEntry(entry, out, prefix, depth, bag) {
+  if (!entry || depth > FOLDER_MAX_DEPTH) return;
+  const name = entry.name || '';
+  if (name.startsWith('.')) return;
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    const rel = prefix ? `${prefix}/${file.name}` : file.name;
+    considerWalkedFile(file, rel, out, bag);
+    return;
+  }
+  if (entry.isDirectory) {
+    if (shouldSkipDir(name)) return;
+    const next = prefix ? `${prefix}/${name}` : name;
+    const children = await readAllDirectoryEntries(entry.createReader());
+    for (const child of children) {
+      await collectDroppedEntry(child, out, next, depth + 1, bag);
+    }
+  }
+}
+
+async function filesFromDataTransfer(dt) {
+  const bag = emptySkipBag();
+  const items = [...(dt.items || [])];
+  const walked = [];
+  let usedEntries = false;
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (!entry) continue;
+    usedEntries = true;
+    await collectDroppedEntry(entry, walked, '', 0, bag);
+  }
+  if (usedEntries) {
+    walked.skippedBag = bag;
+    return walked;
+  }
+  const files = [...(dt.files || [])].filter((f) => {
+    const why = skipReason(tagReliquaryPath(f, f.webkitRelativePath || f.name));
+    if (why) {
+      noteSkip(bag, why);
+      return false;
+    }
+    return isSupportedFile(f);
+  }).map((f) => tagReliquaryPath(f, f.webkitRelativePath || f.name));
+  files.skippedBag = bag;
+  return files;
+}
+
+async function splitTextToChunks(text, sourceName, onWindow) {
+  const chunkOpts = {
+    ...activeChunkSettings(),
+    sourceName,
+  };
+  let chunks = chunkDocument(text, chunkOpts);
+  if (state.settings.useAiChunk && llmEnabled(state.settings)) {
+    try {
+      const windows = windowTextForAi(text, 8000);
+      const gathered = [];
+      const provider = inferProvider(state.settings);
+      for (let w = 0; w < windows.length; w++) {
+        onWindow?.(w, windows.length, provider);
+        const { content } = await chatFromSettings(state.settings, {
+          temperature: 0.15,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You only split. Never classify a whole document as one card. JSON array of fragments only. Rip dialogue out of narration. Separate unrelated ideas.',
+            },
+            {
+              role: 'user',
+              content: buildAiChunkPrompt(windows[w], chunkOpts),
+            },
+          ],
+        });
+        const arr = parseJsonArray(content);
+        for (const c of arr) {
+          const piece = String(c.text || '').trim();
+          if (piece.length < 8) continue;
+          gathered.push({
+            text: piece,
+            labels: Array.isArray(c.labels) ? c.labels.map(String) : [],
+            isLarge: piece.length >= 1200,
+            tags: [`src:${String(sourceName).slice(0, 40)}`],
+            preview: piece.slice(0, 320),
+          });
+        }
+      }
+      if (gathered.length >= 2) chunks = gathered;
+    } catch (e) {
+      console.warn('AI chunk failed, using structural', e);
+    }
+  }
+  if (!chunks.length) {
+    chunks = [
+      {
+        text: String(text || '').trim(),
+        preview: String(text || '').slice(0, 320),
+        labels: [],
+        tags: [`src:${String(sourceName).slice(0, 40)}`],
+        isLarge: String(text || '').length >= 1200,
+      },
+    ];
+  }
+  const usable = chunks.filter((c) => c.text && !isJunkPiece(c.text));
+  return usable.length ? usable : chunks;
+}
+
+function windowTextForAi(text, maxChars) {
+  const t = String(text || '');
+  if (t.length <= maxChars) return [t];
+  const paras = t.split(/\n{2,}/);
+  const windows = [];
+  let cur = '';
+  for (const p of paras) {
+    if (cur && cur.length + p.length + 2 > maxChars) {
+      windows.push(cur);
+      cur = p;
+    } else {
+      cur = cur ? `${cur}\n\n${p}` : p;
+    }
+  }
+  if (cur) windows.push(cur);
+  return windows.length ? windows : [t.slice(0, maxChars)];
 }
 
 function setImportProgress(msg, pct) {
@@ -670,7 +910,7 @@ function setImportProgress(msg, pct) {
     <p class="dim">${esc(msg)}</p>`;
 }
 
-async function ingestFiles(files) {
+async function ingestFiles(files, meta = {}) {
   if (!files?.length) {
     toast('No supported files found', 'err');
     return;
@@ -682,79 +922,44 @@ async function ingestFiles(files) {
   state.busy = true;
   let totalPieces = 0;
   let okFiles = 0;
+  let duplicates = 0;
   const problems = [];
   const warnings = [];
+  const existing = await listDocuments();
+  const seen = new Set(existing.map((d) => `${d.name}|${d.charCount}`));
   toast(`Importing ${files.length} file(s)…`);
   setImportProgress(`Starting… 0 / ${files.length}`, 0);
   try {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      setImportProgress(`Reading “${file.name}”… (${i + 1} / ${files.length})`, ((i + 0.3) / files.length) * 100);
+      const label = file.reliquaryPath || file.name;
+      setImportProgress(`Reading “${label}”… (${i + 1} / ${files.length})`, ((i + 0.3) / files.length) * 100);
       try {
         const parsed = await parseFile(file);
-        if (parsed.warnings?.length) warnings.push(...parsed.warnings.map((w) => `${file.name}: ${w}`));
+        if (parsed.warnings?.length) warnings.push(...parsed.warnings.map((w) => `${label}: ${w}`));
         if (!parsed.text || parsed.text.trim().length < 12) {
-          problems.push(`${file.name}: almost no text found`);
+          problems.push(`${label}: almost no text found`);
           continue;
         }
-        setImportProgress(`Splitting “${file.name}”…`, ((i + 0.6) / files.length) * 100);
+        const dupKey = `${parsed.name}|${parsed.text.length}`;
+        if (seen.has(dupKey)) {
+          duplicates += 1;
+          continue;
+        }
+        seen.add(dupKey);
+        setImportProgress(`Splitting “${label}”…`, ((i + 0.6) / files.length) * 100);
         const doc = await putDocument({
           name: parsed.name,
           kind: parsed.kind,
           text: parsed.text,
         });
-        const chunkOpts = {
-          ...activeChunkSettings(),
-          sourceName: parsed.name,
-        };
-        let chunks = chunkDocument(parsed.text, chunkOpts);
-
-        if (state.settings.useAiChunk && state.settings.llmBaseUrl && parsed.text.length < 12000) {
-          try {
-            const { content } = await chatCompletion({
-              baseUrl: state.settings.llmBaseUrl,
-              apiKey: state.settings.llmApiKey,
-              model: state.settings.llmModel,
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You split writing into reusable fragments. JSON array only.',
-                },
-                {
-                  role: 'user',
-                  content: buildAiChunkPrompt(parsed.text, chunkOpts),
-                },
-              ],
-            });
-            const arr = parseJsonArray(content);
-            if (arr.length) {
-              chunks = arr
-                .map((c) => ({
-                  text: String(c.text || '').trim(),
-                  labels: Array.isArray(c.labels) ? c.labels.map(String) : [],
-                  isLarge: !!c.isLarge,
-                  tags: [`src:${parsed.name.slice(0, 40)}`],
-                  preview: String(c.text || '').slice(0, 320),
-                }))
-                .filter((c) => c.text.length >= 12);
-            }
-          } catch (e) {
-            console.warn('AI chunk failed, using structural', e);
-          }
-        }
-
-        if (!chunks.length) {
-          // Keep at least one piece so short notes still land
-          chunks = [
-            {
-              text: parsed.text.trim(),
-              preview: parsed.text.slice(0, 320),
-              labels: [],
-              tags: [`src:${parsed.name.slice(0, 40)}`],
-              isLarge: parsed.text.length >= 1200,
-            },
-          ];
-        }
+        const chunks = await splitTextToChunks(parsed.text, parsed.name, (w, n, provider) => {
+          const where = provider === 'xai' ? 'xAI' : provider === 'ollama' ? 'Ollama' : 'LLM';
+          setImportProgress(
+            `${where} splitting “${label}” (${w + 1}/${n})…`,
+            ((i + 0.6) / files.length) * 100
+          );
+        });
 
         const records = chunks.map((c) => ({
           documentId: doc.id,
@@ -794,14 +999,25 @@ async function ingestFiles(files) {
       return;
     }
 
+    const skipNote = skipBagNote(meta.skippedBag);
+    const extraSkip = (problems.length || 0) + duplicates;
     state.lastExcavation = {
       pieces: totalPieces,
       files: okFiles,
-      skipped: problems.length,
+      skipped: extraSkip + Object.values(meta.skippedBag || {}).reduce((a, n) => a + (Number(n) || 0), 0),
+      note: [
+        duplicates ? `${duplicates} already in vault` : '',
+        problems.length ? `${problems.length} failed` : '',
+        skipNote,
+      ]
+        .filter(Boolean)
+        .join(' · '),
       at: Date.now(),
     };
     toast(
-      `Imported ${okFiles} file(s) → ${totalPieces} piece(s)${problems.length ? ` · ${problems.length} skipped` : ''}`,
+      `Imported ${okFiles} file(s) → ${totalPieces} piece(s)${
+        state.lastExcavation.note ? ` · ${state.lastExcavation.note}` : ''
+      }`,
       'ok'
     );
     state.view = 'pieces';
@@ -904,7 +1120,7 @@ function renderPieces(root, actions) {
             <p>${
               state.q || state.label
                 ? 'Clear search or labels, or import another draft.'
-                : 'Bring in an old draft — we’ll split it into pieces you can actually read.'
+                : 'Bring in a whole drafts folder — we’ll split the files into pieces you can actually read.'
             }</p>
             <p><button type="button" class="btn primary" id="empty-import">Import drafts</button>
             ${state.q || state.label ? '<button type="button" class="btn" id="empty-clear">Clear filters</button>' : ''}</p>
@@ -938,6 +1154,7 @@ function renderPieces(root, actions) {
     state.view = 'excavate';
     persistSession();
     render();
+    requestAnimationFrame(() => importFolder());
   });
   $('#empty-clear')?.addEventListener('click', async () => {
     state.q = '';
@@ -1304,8 +1521,8 @@ async function openReading(id) {
 }
 
 async function openAiDevelop(ids) {
-  if (!state.settings.llmBaseUrl) {
-    toast('Add an LLM URL in Settings (optional AI)', 'err');
+  if (!llmEnabled(state.settings)) {
+    toast('Turn on Ollama or xAI in Settings first', 'err');
     state.view = 'settings';
     render();
     return;
@@ -1322,7 +1539,13 @@ async function openAiDevelop(ids) {
   backdrop.innerHTML = `
     <div class="modal wide">
       <h2>Development assistance</h2>
-      <p class="muted">${pieces.length} piece(s) · preserves your wording; suggests structure only</p>
+      <p class="muted">${pieces.length} piece(s) · preserves your wording; suggests structure only${
+        inferProvider(state.settings) === 'xai'
+          ? ' · <strong>these fragments will be sent to xAI</strong>'
+          : inferProvider(state.settings) === 'ollama'
+            ? ' · Ollama on this machine'
+            : ''
+      }</p>
       <div class="field">
         <label>Intent</label>
         <select id="ai-intent">
@@ -1351,10 +1574,7 @@ async function openAiDevelop(ids) {
     out.hidden = false;
     out.textContent = 'Thinking…';
     try {
-      const { content } = await chatCompletion({
-        baseUrl: state.settings.llmBaseUrl,
-        apiKey: state.settings.llmApiKey,
-        model: state.settings.llmModel,
+      const { content } = await chatFromSettings(state.settings, {
         messages: [
           {
             role: 'system',
@@ -1934,10 +2154,10 @@ function activeChunkSettings() {
 
 function readChunkFields(prefix) {
   const unit = $(`#${prefix}-unit`)?.value || 'hybrid';
-  const sizePreset = $(`#${prefix}-size`)?.value || 'medium';
-  const pageWords = Number($(`#${prefix}-page-words`)?.value) || 300;
-  const minChars = Number($(`#${prefix}-min`)?.value) || 40;
-  const maxChars = Number($(`#${prefix}-max`)?.value) || 1800;
+  const sizePreset = $(`#${prefix}-size`)?.value || 'fine';
+  const pageWords = Number($(`#${prefix}-page-words`)?.value) || 120;
+  const minChars = Number($(`#${prefix}-min`)?.value) || 12;
+  const maxChars = Number($(`#${prefix}-max`)?.value) || 420;
   const respectPageBreaks = !!$(`#${prefix}-pages`)?.checked;
   const keepDialogueTogether = !!$(`#${prefix}-dialogue`)?.checked;
   // Keep legacy chunkMode in sync for older displays
@@ -2010,7 +2230,7 @@ function renderChunkControls(prefix, values, { showEstimate = false } = {}) {
       </label>
       <label class="field check-row">
         <input type="checkbox" id="${prefix}-dialogue" ${v.keepDialogueTogether ? 'checked' : ''} />
-        Keep short dialogue lines together when possible
+        Keep dialogue glued to surrounding narration (off = rip speech onto its own cards)
       </label>
       ${
         showEstimate
@@ -2063,7 +2283,8 @@ function renderImportSplitPanel() {
     <div class="piece-card import-split-card">
       <h3 style="font-family:var(--serif);margin:0 0 0.35rem">How to split (this import)</h3>
       <p class="muted" style="margin:0 0 0.75rem">
-        Offline by default — no AI required. Pick sentence / paragraph / page cuts and piece size.
+        Reliquary cuts each file into <strong>fragments you can reorder</strong> — not one card per document.
+        Dialogue is ripped out; idea-dumps are separated. Offline by default.
         ${usingSession ? '<strong>Session override is on</strong> (won’t change Settings until you save it there).' : 'Defaults come from <strong>Settings</strong>.'}
       </p>
       ${renderChunkControls('imp', values)}
@@ -2102,6 +2323,9 @@ function bindImportSplitPanel() {
 
 function renderSources(root, actions) {
   actions.innerHTML = '';
+  actions.innerHTML = state.documents.length
+    ? `<button type="button" class="btn primary" id="resplit-all">Re-split all sources…</button>`
+    : '';
   root.innerHTML = state.documents.length
     ? `<div class="card-grid">
         ${state.documents
@@ -2120,8 +2344,8 @@ function renderSources(root, actions) {
           .join('')}
       </div>
       <p class="muted" style="margin-top:1rem">
-        <strong>Re-split offline</strong> replaces this source’s pieces using your current split settings
-        (sentence / paragraph / page, etc.). Starred pieces from this source are kept only if you cancel — re-split starts clean.
+        <strong>Re-split</strong> recuts stored text with current fragment settings (fine hybrid, dialogue ripped out).
+        Use this on files you already imported as one blob. Re-split starts clean (starred cards from that source go too).
       </p>`
     : `<div class="empty">
         <h3>No files imported yet</h3>
@@ -2144,6 +2368,67 @@ function renderSources(root, actions) {
   root.querySelectorAll('[data-resplit-doc]').forEach((btn) => {
     btn.onclick = () => openResplitModal(btn.dataset.resplitDoc);
   });
+  $('#resplit-all')?.addEventListener('click', () => resplitAllSources());
+}
+
+async function resplitAllSources() {
+  if (state.busy) {
+    toast('Already working…', 'err');
+    return;
+  }
+  const docs = (state.documents || []).filter((d) => d.text && String(d.text).trim().length >= 12);
+  const skipped = (state.documents || []).length - docs.length;
+  if (!docs.length) {
+    toast('No stored source text — re-import files to re-split', 'err');
+    return;
+  }
+  const aiOn = !!(state.settings.useAiChunk && llmEnabled(state.settings));
+  const ok = confirm(
+    `Re-split ${docs.length} source(s) into fragments with current settings?\n\nExisting cards (including starred) from those sources will be replaced.${
+      skipped ? ` ${skipped} source(s) have no stored text and will be skipped.` : ''
+    }${aiOn ? '\n\nAI assist is on — each source will be sent to your configured LLM.' : ''}`
+  );
+  if (!ok) return;
+  state.busy = true;
+  let total = 0;
+  let failed = 0;
+  try {
+    for (let i = 0; i < docs.length; i++) {
+      const doc = docs[i];
+      toast(`Re-splitting “${doc.name}” (${i + 1}/${docs.length})…`);
+      try {
+        await deletePiecesByDocument(doc.id);
+        const chunks = await splitTextToChunks(doc.text, doc.name);
+        const records = chunks.map((c) => ({
+          documentId: doc.id,
+          sourceName: doc.name,
+          text: c.text,
+          preview: c.preview,
+          labels: c.labels || [],
+          tags: c.tags || [],
+          isLarge: c.isLarge,
+          status: 'active',
+        }));
+        await putPiecesBulk(records);
+        await putDocument({ ...doc, pieceCount: records.length, text: doc.text });
+        total += records.length;
+      } catch (err) {
+        console.error(doc.name, err);
+        failed += 1;
+      }
+      await yieldToMain();
+    }
+    await reload();
+    toast(
+      failed
+        ? `Re-split into ${total} fragment(s); ${failed} source(s) failed`
+        : `Re-split ${docs.length} source(s) into ${total} fragment(s)`,
+      failed ? 'err' : 'ok'
+    );
+    render();
+  } finally {
+    state.busy = false;
+  }
 }
 
 async function openResplitModal(docId) {
@@ -2160,9 +2445,16 @@ async function openResplitModal(docId) {
     <div class="modal piece-card" style="max-width:28rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.5rem">Re-split “${esc(doc.name)}”</h3>
       <p class="muted">
-        Offline only. Replaces <strong>${existing.length}</strong> piece(s)
+        Replaces <strong>${existing.length}</strong> piece(s)
         ${starred ? ` (including <strong>${starred}</strong> starred)` : ''}.
         Source text is kept; only the cut changes.
+        ${
+          state.settings.useAiChunk && llmEnabled(state.settings)
+            ? inferProvider(state.settings) === 'xai'
+              ? ' <strong>AI assist is on (xAI)</strong> — this source will leave the machine.'
+              : ' <strong>AI assist is on</strong> — Ollama on this machine, or your custom URL.'
+            : ' Offline only.'
+        }
       </p>
       ${renderChunkControls('rs', activeChunkSettings())}
       <p class="dim" id="rs-est" style="margin:0.5rem 0 0"></p>
@@ -2195,21 +2487,14 @@ async function openResplitModal(docId) {
     }
     try {
       const opts = { ...readChunkFields('rs'), sourceName: doc.name };
-      // delete old pieces only (keep document)
-      for (const p of existing) {
-        await deletePiece(p.id);
-      }
-      let chunks = chunkDocument(doc.text, opts);
-      if (!chunks.length) {
-        chunks = [
-          {
-            text: doc.text.trim(),
-            preview: doc.text.slice(0, 320),
-            labels: [],
-            tags: [`src:${doc.name.slice(0, 40)}`],
-            isLarge: doc.text.length >= 1200,
-          },
-        ];
+      const prevImport = state.importChunk;
+      state.importChunk = opts;
+      await deletePiecesByDocument(doc.id);
+      let chunks;
+      try {
+        chunks = await splitTextToChunks(doc.text, doc.name);
+      } finally {
+        state.importChunk = prevImport;
       }
       const records = chunks.map((c) => ({
         documentId: doc.id,
@@ -2234,6 +2519,279 @@ async function openResplitModal(docId) {
 }
 
 // ── Settings ───────────────────────────────────────────────
+
+function renderLlmSettingsCard(s) {
+  const provider = inferProvider(s);
+  const providerOpts = LLM_PROVIDERS.map(
+    (p) =>
+      `<option value="${p.id}" ${provider === p.id ? 'selected' : ''}>${esc(p.label)}</option>`
+  ).join('');
+  const xaiOpts = XAI_MODELS.map(
+    (m) =>
+      `<option value="${esc(m.id)}" ${
+        (s.llmModel || XAI_DEFAULT_MODEL) === m.id ? 'selected' : ''
+      }>${esc(m.label)}</option>`
+  ).join('');
+  return `
+    <div class="piece-card" style="max-width:40rem;margin-top:1rem" id="llm-settings">
+      <h3 style="font-family:var(--serif);margin:0 0 0.5rem">Optional AI</h3>
+      <p class="muted" style="margin-top:0">
+        You do <strong>not</strong> need an API key. Offline split already rips dialogue and idea-dumps.
+        Turn this on only if you want the model to help cut messy drafts into fragments.
+      </p>
+      <p class="dim" id="s-llm-proxy" style="margin:0.35rem 0 0.75rem"></p>
+      <div class="field">
+        <label>Provider</label>
+        <select id="s-llm-provider">${providerOpts}</select>
+        <p class="dim chunk-hint" id="s-llm-provider-hint" style="margin:0.35rem 0 0"></p>
+      </div>
+
+      <div id="s-ollama-wrap" hidden>
+        <div class="howto">
+          <p class="howto-title">How to use Ollama (stays on this computer)</p>
+          <ol class="howto-ol">
+            <li>Install <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> and leave it running (menu-bar icon on a Mac).</li>
+            <li>In Terminal, pull a model that is 8B or larger:
+              <br><code>ollama pull llama3.1</code>
+              <br>or <code>ollama pull qwen2.5:14b</code>.
+              Do not use <code>llama3.2</code> — that one is 3B and too small.</li>
+            <li>Pick the model below and click <strong>Test connection</strong>.</li>
+          </ol>
+        </div>
+        <div class="field">
+          <label>Ollama model</label>
+          <select id="s-ollama-model"></select>
+        </div>
+        <p class="dim" id="s-ollama-warn"></p>
+      </div>
+
+      <div id="s-xai-wrap" hidden>
+        <div class="howto">
+          <p class="howto-title">How to connect the xAI Grok API</p>
+          <ol class="howto-ol">
+            <li>Open <a href="https://console.x.ai" target="_blank" rel="noopener">console.x.ai</a> → <strong>API keys</strong> → create a key. Copy it (it starts with <code>xai-</code>).</li>
+            <li>In the Reliquary folder, copy the file <code>.env.example</code> and rename the copy to <code>.env</code>.</li>
+            <li>Open <code>.env</code> in any text editor. Put the key on this line, with no quotes and no spaces around the equals sign:
+              <br><code>XAI_API_KEY=xai-your-key-here</code></li>
+            <li>Stop Reliquary (click the Terminal window, press Control+C) and start it again with <code>./start.sh</code> (Mac) or <code>start.bat</code> (Windows). The key is read only when the server starts.</li>
+            <li>Tick the privacy box below, pick a Grok model, click <strong>Save settings</strong>, then <strong>Test connection</strong>.</li>
+          </ol>
+          <p class="dim" style="margin:0.65rem 0 0">Do not want a <code>.env</code> file? Paste the key in the field below instead. That stores it in this browser’s vault. The file is safer and never uploaded.</p>
+        </div>
+        <p class="muted">
+          When Grok is on, the text you send <strong>leaves this computer</strong> and is processed by xAI.
+          They do <strong>not train</strong> on API inputs/outputs unless you opt in at the Console.
+          Default logs are kept about 30 days for abuse review, then deleted.
+          <a href="https://docs.x.ai/developers/faq/security" target="_blank" rel="noopener">Zero Data Retention</a>
+          is a team toggle in the Console — it stops disk retention; it is not a local model.
+        </p>
+        <label class="field check-row">
+          <input type="checkbox" id="s-xai-ack" ${s.llmPrivacyAck ? 'checked' : ''} />
+          I understand drafts are sent to xAI, and I want this anyway.
+        </label>
+        <div class="field">
+          <label>Grok model</label>
+          <select id="s-xai-model">${xaiOpts}</select>
+        </div>
+        <p class="dim" id="s-xai-key-status"></p>
+        <div class="field" id="s-xai-key-wrap">
+          <label>API key (paste here only if you are not using Reliquary/.env)</label>
+          <input id="s-llm-key" type="password" value="${esc(s.llmApiKey || '')}" autocomplete="off" placeholder="xai-…" />
+        </div>
+      </div>
+
+      <div id="s-custom-wrap" hidden>
+        <div class="howto">
+          <p class="howto-title">Custom OpenAI-compatible endpoint</p>
+          <ol class="howto-ol">
+            <li>Base URL should look like <code>http://127.0.0.1:8000/v1</code> (include <code>/v1</code>, no trailing slash needed).</li>
+            <li>Paste a model id your server expects, and an API key if it requires one.</li>
+            <li>This talks <em>from the browser</em>. Reliquary will not proxy custom URLs (that would be an open proxy).</li>
+          </ol>
+        </div>
+        <div class="field">
+          <label>Base URL</label>
+          <input id="s-llm-url" value="${esc(s.llmBaseUrl || '')}" placeholder="http://127.0.0.1:8000/v1" />
+        </div>
+        <div class="field">
+          <label>Model</label>
+          <input id="s-llm-model" value="${esc(s.llmModel || '')}" placeholder="model-id" />
+        </div>
+        <div class="field">
+          <label>API key (if needed)</label>
+          <input id="s-llm-key-custom" type="password" value="${esc(s.llmApiKey || '')}" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="piece-actions" style="margin-top:0.75rem">
+        <button type="button" class="btn" id="s-test">Test connection</button>
+        <button type="button" class="btn ghost" id="s-llm-refresh">Refresh models</button>
+      </div>
+      <p id="s-llm-status" class="dim"></p>
+    </div>
+  `;
+}
+
+async function readLlmFields() {
+  const provider = $('#s-llm-provider')?.value || 'off';
+  const ack = !!$('#s-xai-ack')?.checked;
+  if (provider === 'xai' && !ack) {
+    throw new Error('xAI requires the privacy acknowledgement.');
+  }
+  const proxy = await getProxyStatus();
+  let llmModel = '';
+  let llmBaseUrl = '';
+  let llmApiKey = '';
+  if (provider === 'ollama') {
+    llmModel = $('#s-ollama-model')?.value || 'llama3.1';
+    llmBaseUrl = `${OLLAMA_DEFAULT_HOST}/v1`;
+  } else if (provider === 'xai') {
+    llmModel = $('#s-xai-model')?.value || XAI_DEFAULT_MODEL;
+    llmBaseUrl = 'https://api.x.ai/v1';
+    llmApiKey = proxy.xai?.keyConfigured ? '' : ($('#s-llm-key')?.value || '').trim();
+  } else if (provider === 'custom') {
+    llmBaseUrl = ($('#s-llm-url')?.value || '').trim();
+    llmModel = ($('#s-llm-model')?.value || '').trim();
+    llmApiKey = ($('#s-llm-key-custom')?.value || '').trim();
+    if (!llmBaseUrl) throw new Error('Custom provider needs a base URL.');
+  }
+  const useAi = !!$('#s-ai-chunk')?.checked && provider !== 'off';
+  return {
+    llmProvider: provider,
+    llmModel,
+    llmBaseUrl,
+    llmApiKey,
+    llmPrivacyAck: ack,
+    useAiChunk: useAi,
+  };
+}
+
+function wireLlmSettings() {
+  const providerSel = $('#s-llm-provider');
+  if (!providerSel) return;
+
+  const applyHint = () => {
+    const meta = LLM_PROVIDERS.find((p) => p.id === providerSel.value);
+    const hint = $('#s-llm-provider-hint');
+    if (hint) hint.textContent = meta?.hint || '';
+    const ollama = $('#s-ollama-wrap');
+    const xai = $('#s-xai-wrap');
+    const custom = $('#s-custom-wrap');
+    if (ollama) ollama.hidden = providerSel.value !== 'ollama';
+    if (xai) xai.hidden = providerSel.value !== 'xai';
+    if (custom) custom.hidden = providerSel.value !== 'custom';
+  };
+
+  const fillOllama = async () => {
+    const sel = $('#s-ollama-model');
+    const warn = $('#s-ollama-warn');
+    if (!sel) return;
+    sel.innerHTML = `<option value="">Looking for Ollama…</option>`;
+    const listed = await listLlmModels('ollama', state.settings);
+    if (!listed.ok || !listed.models?.length) {
+      sel.innerHTML = `<option value="llama3.1">llama3.1 (pull this)</option>`;
+      if (warn) warn.textContent = listed.error || 'Ollama is not reachable.';
+      return;
+    }
+    const current = state.settings.llmModel;
+    const preferred = listed.models.some((m) => m.id === current) ? current : pickOllamaDefault(listed.models);
+    sel.innerHTML = listed.models
+      .map((m) => {
+        const tag = m.parameterSize ? ` (${m.parameterSize})` : '';
+        return `<option value="${esc(m.id)}" ${m.id === preferred ? 'selected' : ''}>${esc(m.id)}${esc(tag)}</option>`;
+      })
+      .join('');
+    const chosen = listed.models.find((m) => m.id === sel.value);
+    if (warn) warn.textContent = ollamaSizeWarning(sel.value, chosen || {});
+    sel.onchange = () => {
+      const m = listed.models.find((x) => x.id === sel.value);
+      if (warn) warn.textContent = ollamaSizeWarning(sel.value, m || {});
+    };
+  };
+
+  const fillXai = async () => {
+    const proxy = await getProxyStatus();
+    const status = $('#s-xai-key-status');
+    const wrap = $('#s-xai-key-wrap');
+    const banner = $('#s-llm-proxy');
+    if (banner) {
+      if (proxy.proxy) {
+        banner.textContent = proxy.xai?.keyConfigured
+          ? 'Server is up. API key loaded from .env on this computer (not stored in the vault).'
+          : 'Server is up. No API key loaded yet — finish the numbered steps below, then restart Reliquary.';
+      } else {
+        banner.textContent =
+          'Reliquary’s server is not running, so it cannot hold your API key. From the Reliquary folder run ./start.sh (Mac) or start.bat (Windows), then refresh this page.';
+      }
+    }
+    if (status) {
+      status.textContent = proxy.xai?.keyConfigured
+        ? 'API key: loaded from .env on this machine. You can skip the paste field.'
+        : 'API key: not in .env yet. Follow the steps above, or paste a key in the field.';
+    }
+    if (wrap) wrap.hidden = !!proxy.xai?.keyConfigured;
+    const sel = $('#s-xai-model');
+    if (!sel) return;
+    try {
+      const listed = await listLlmModels('xai', state.settings);
+      const ids = new Set(XAI_MODELS.map((m) => m.id));
+      for (const m of listed.models || []) {
+        if (m.id && !ids.has(m.id)) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.label || m.id;
+          if (m.id === state.settings.llmModel) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      }
+    } catch {
+      /* static list is enough */
+    }
+  };
+
+  applyHint();
+  getProxyStatus().then((proxy) => {
+    const banner = $('#s-llm-proxy');
+    if (!banner) return;
+    if (providerSel.value === 'xai') return; // fillXai owns the banner
+    if (proxy.proxy) {
+      banner.textContent = proxy.ollama?.ok
+        ? 'Server is up. Ollama is reachable on this machine.'
+        : 'Server is up. Ollama is not running — install it from ollama.com if you want local AI.';
+    } else {
+      banner.textContent =
+        'Reliquary’s server is not running. From this folder run ./start.sh (Mac) or start.bat (Windows). Ollama can still work if the browser can reach it.';
+    }
+  });
+
+  providerSel.addEventListener('change', () => {
+    applyHint();
+    if (providerSel.value === 'ollama') fillOllama();
+    if (providerSel.value === 'xai') fillXai();
+  });
+  if (providerSel.value === 'ollama') fillOllama();
+  if (providerSel.value === 'xai') fillXai();
+
+  $('#s-llm-refresh')?.addEventListener('click', async () => {
+    if (providerSel.value === 'ollama') await fillOllama();
+    if (providerSel.value === 'xai') await fillXai();
+    toast('Refreshed', 'ok');
+  });
+
+  $('#s-test')?.addEventListener('click', async () => {
+    const el = $('#s-llm-status');
+    try {
+      const llm = await readLlmFields();
+      if (el) el.textContent = 'Testing…';
+      const r = await checkLlm({ ...state.settings, ...llm });
+      if (el) el.textContent = r.ok ? r.message : r.reason;
+      toast(r.ok ? 'LLM OK' : r.reason, r.ok ? 'ok' : 'err');
+    } catch (err) {
+      if (el) el.textContent = err.message || String(err);
+      toast(err.message || String(err), 'err');
+    }
+  });
+}
 
 function renderSettings(root, actions) {
   actions.innerHTML = `<button type="button" class="btn" id="btn-cmd" title="⌘K">Commands</button>`;
@@ -2271,14 +2829,13 @@ function renderSettings(root, actions) {
     <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Offline split (LLM-free)</h3>
       <p class="muted" style="margin:0 0 0.85rem">
-        These controls decide how drafts become pieces <strong>without AI</strong>.
-        Sentence → page grain, size, page breaks, and dialogue packing.
-        You can also override per import on <strong>Start here</strong>.
+        Reliquary is a <strong>fragment desk</strong>, not a filing cabinet. Each file is cut into cards you reorder.
+        Leave “keep dialogue glued” unchecked to rip speech out of a story. Idea-dumps (filename containing “ideas”, bullets, “another thought…”) become many cards, not one.
       </p>
       ${renderChunkControls('s', s)}
       <label class="field check-row" style="margin-top:0.75rem">
         <input type="checkbox" id="s-ai-chunk" ${s.useAiChunk ? 'checked' : ''} />
-        Also try AI-assisted chunking on import (optional; needs LLM URL below; falls back offline)
+        Also try AI-assisted fragmenting on import / re-split (falls back offline). Needs a provider below.
       </label>
     </div>
     <div class="piece-card" style="max-width:40rem;margin-top:1rem">
@@ -2288,26 +2845,7 @@ function renderSettings(root, actions) {
         <textarea id="s-labels" rows="8">${esc((s.labels || DEFAULT_LABELS).join('\n'))}</textarea>
       </div>
     </div>
-    <div class="piece-card" style="max-width:40rem;margin-top:1rem">
-      <h3 style="font-family:var(--serif);margin:0 0 0.5rem">Optional AI</h3>
-      <p class="muted" style="margin-top:0">Clearly optional. Local Ollama or any OpenAI-compatible API (including Grok).</p>
-      <div class="field">
-        <label>Base URL</label>
-        <input id="s-llm-url" value="${esc(s.llmBaseUrl || '')}" placeholder="http://localhost:11434/v1" />
-      </div>
-      <div class="field">
-        <label>Model</label>
-        <input id="s-llm-model" value="${esc(s.llmModel || '')}" placeholder="llama3.2 or grok-…" />
-      </div>
-      <div class="field">
-        <label>API key (if needed)</label>
-        <input id="s-llm-key" type="password" value="${esc(s.llmApiKey || '')}" autocomplete="off" />
-      </div>
-      <div class="piece-actions">
-        <button type="button" class="btn" id="s-test">Test connection</button>
-      </div>
-      <p id="s-llm-status" class="dim"></p>
-    </div>
+    ${renderLlmSettingsCard(s)}
     <div class="piece-card" style="max-width:40rem;margin-top:1rem">
       <h3 style="font-family:var(--serif);margin:0 0 0.75rem">Support links (shown in app)</h3>
       <p class="dim" style="margin:0 0 0.65rem">Leave GitHub Sponsors empty to hide it. Ko-fi defaults to the project page.</p>
@@ -2330,6 +2868,7 @@ function renderSettings(root, actions) {
   wireChunkControls('s');
   wireInstallButtons(root);
   wireVaultBackup(root);
+  wireLlmSettings();
 
   $('#s-save').onclick = async () => {
     const labels = $('#s-labels')
@@ -2337,13 +2876,17 @@ function renderSettings(root, actions) {
       .map((line) => line.trim())
       .filter(Boolean);
     const chunk = readChunkFields('s');
+    let llm;
+    try {
+      llm = await readLlmFields();
+    } catch (err) {
+      toast(err.message || String(err), 'err');
+      return;
+    }
     state.settings = await setSettings({
       theme: $('#s-theme').value,
       ...chunk,
-      useAiChunk: $('#s-ai-chunk').checked,
-      llmBaseUrl: $('#s-llm-url').value.trim(),
-      llmModel: $('#s-llm-model').value.trim(),
-      llmApiKey: $('#s-llm-key').value.trim(),
+      ...llm,
       labels: labels.length ? labels : DEFAULT_LABELS,
       supportGithubSponsors: $('#s-gh').value.trim(),
       supportKofi: $('#s-kofi').value.trim(),
@@ -2352,11 +2895,6 @@ function renderSettings(root, actions) {
     applyTheme(state.settings.theme);
     toast('Settings saved', 'ok');
     render();
-  };
-  $('#s-test').onclick = async () => {
-    const r = await checkLlm($('#s-llm-url').value.trim(), $('#s-llm-key').value.trim());
-    $('#s-llm-status').textContent = r.ok ? r.message : r.reason;
-    toast(r.ok ? 'LLM OK' : r.reason, r.ok ? 'ok' : 'err');
   };
 }
 
@@ -2442,7 +2980,8 @@ function openCommandPalette() {
     render();
   };
   const commands = [
-    { id: 'start', label: 'Go to Start here', run: () => go('excavate') },
+    { id: 'start', label: 'Go to Import', run: () => go('excavate') },
+    { id: 'import-folder', label: 'Import a whole folder…', run: () => go('excavate').then(() => importFolder()) },
     { id: 'pieces', label: 'Go to My pieces', run: () => go('pieces', 'active') },
     { id: 'starred', label: 'Go to Starred', run: () => go('pieces', 'starred') },
     { id: 'develop', label: 'Go to Work on later', run: () => go('pieces', 'develop') },

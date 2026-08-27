@@ -40,6 +40,20 @@
         <p class="dim" style="font-size:0.85rem;margin-top:0.5rem">If this never finishes, close other Reliquary tabs and press Cmd+Shift+R</p>
       </div>
     </div>
-    <script type="module" src="./src/main.js?v=7"></script>
+    <script>
+      setTimeout(function () {
+        var app = document.getElementById('app');
+        if (!app) return;
+        var boot = app.querySelector('.boot');
+        if (!boot || !/Opening your vault/.test(boot.textContent || '')) return;
+        var p = document.createElement('p');
+        p.className = 'dim';
+        p.style.cssText = 'max-width:28rem;margin:1rem auto 0;font-size:0.85rem;line-height:1.5';
+        p.innerHTML =
+          'Still opening. Use <strong>http://127.0.0.1:8780</strong> (run <code>./start.sh</code>), close other Reliquary tabs, then press Cmd+Shift+R.';
+        boot.appendChild(p);
+      }, 5000);
+    </script>
+    <script type="module" src="./src/main.js?v=12"></script>
   </body>
 </html>

@@ -26,12 +26,12 @@ Then pin it like any other app. You are **not** downloading a special installer 
 2. Paste this and press Enter (adjust the path if your folder is elsewhere):
 
 ```bash
-cd ~/Desktop/OtterlyEnterprises/reliquary
+cd ~/Desktop/OtterlyEnterprises/Software/reliquary
 ./start.sh
 ```
 
 3. A page should open. If not, go to: **http://127.0.0.1:8780**
-4. **Install as app** (see above), then click **Choose files** and pick old Word docs or notes.
+4. **Install as app** (see above), then click **Whole folder** and pick the folder where all your drafts live (subfolders are included).
 
 To quit the small server later: click the Terminal window and press **Control+C**.  
 (Once installed as an app, you still need that tiny server running for a fully local open — or a future hosted URL.)
@@ -45,7 +45,7 @@ To quit the small server later: click the Terminal window and press **Control+C*
 2. Unzip Reliquary if needed
 3. Double-click **`start.bat`**
 4. Open **http://127.0.0.1:8780** if the browser doesn’t open itself
-5. **Install as app**, then click **Choose files**
+5. **Install as app**, then click **Whole folder** and pick your drafts folder
 
 To quit: close the black window.
 
@@ -53,17 +53,28 @@ To quit: close the black window.
 
 ## What happens to your writing?
 
-- Stays **only on your computer**
-- Reliquary does **not** put drafts on the internet
-- Optional AI is off unless you turn it on in Settings
+- Stays **only on your computer** unless you turn on cloud AI
+- Reliquary does **not** put drafts on the internet by default
+- Optional AI is **off** until you pick a provider in Settings
+- **Ollama** = still local. **xAI Grok** = drafts go to xAI (no training on API traffic by default; you have to tick a privacy box first). Prefer `Reliquary/.env` for the key.
 
 ---
 
 ## The simple loop
 
-1. **Start here** → open drafts  
-2. **My pieces** → read cards, star the good bits  
-3. **Work on later** → a shelf for “this could become something”  
-4. Export any piece as Markdown when you’re ready to write again elsewhere  
+1. **Start here** → open drafts (whole folder is fine)  
+2. **My pieces** → cards are *fragments* (dialogue ripped out, idea-dumps split), not whole files  
+3. Already imported as one blob? **Sources → Re-split all sources…**  
+4. **Work on later** → a shelf for “this could become something”  
+5. Export any piece as Markdown when you’re ready to write again elsewhere  
 
 That’s it. You’re not “installing a stack.” You’re opening a vault.
+
+---
+
+## Optional: smarter cuts (AI)
+
+You do not need this. The vault already rips dialogue and splits idea-dumps offline.
+
+- **Ollama (private):** Settings → Optional AI → Ollama, and follow the numbered steps (install Ollama, `ollama pull llama3.1`).
+- **xAI Grok API:** Settings → Optional AI → xAI Grok API, and follow the numbered steps (get a key at [console.x.ai](https://console.x.ai), copy `.env.example` to `.env`, restart, Test).

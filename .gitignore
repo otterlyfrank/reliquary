@@ -4,7 +4,8 @@ node_modules/
 .idea/
 .vscode/
 .env
-.env.*
+.env.local
+!.env.example
 __pycache__/
 src-tauri/target/
 dist/

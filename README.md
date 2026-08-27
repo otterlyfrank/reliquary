@@ -74,8 +74,7 @@ If it doesn’t, open that URL yourself. Then use **Install as an app** above.
 
 ```bash
 cd reliquary
-python3 -m http.server 8780
-# Windows may need: python -m http.server 8780
+python3 serve.py
 ```
 
 Then open **http://127.0.0.1:8780**.
@@ -98,9 +97,9 @@ A **Tauri** wrapper lives in `src-tauri/` for people who want a classic `.dmg` /
 
 | Area | What you get |
 |------|----------------|
-| **Ingestion** | `.txt`, `.md`, `.docx`, `.odt`, legacy `.doc` (best-effort) · multi-file · folder import · large text off main thread |
-| **Chunking** | Offline units (sentence → page + hybrid) with size fine-tuning · optional AI refine |
-| **Optional AI chunk** | If you configure an LLM, import can refine boundaries (off by default) |
+| **Ingestion** | `.txt`, `.md`, `.docx`, `.odt`, legacy `.doc` (best-effort) · **whole folder** (nested) · drop a folder · large text off main thread |
+| **Chunking** | **Fragments, not whole files** — fine hybrid default, dialogue ripped out, idea-dumps exploded · optional AI refine |
+| **Optional AI chunk** | If you configure an LLM, import/re-split can refine *boundaries* (off by default). Never required. |
 | **Labels** | Configurable multi-label taxonomy (defaults included) + free tags |
 | **Cards** | Star / pin / energy / develop / archive · compact density · multi-select · shelves + pagination |
 | **Develop queue** | Send fragments to a “Work on later” shelf |
@@ -117,9 +116,9 @@ A **Tauri** wrapper lives in `src-tauri/` for people who want a classic `.dmg` /
 Writers accumulate hundreds of pages of incomplete documents — gold mixed with noise. Reliquary:
 
 1. **Ingests** old files  
-2. **Chunks** them into discrete, readable pieces  
-3. **Classifies** lightly (your labels, your tags)  
-4. Puts everything on **beautiful cards** so you actually open the tool again  
+2. **Chunks** them into discrete fragments you can reorder (dialogue, ideas, scraps)  
+3. **Labels** only when the signal is obvious — you file the rest  
+4. Puts everything on **cards** so you actually open the tool again  
 
 No mandatory cloud. No collaboration theater. Respect for past work.
 
@@ -127,15 +126,22 @@ No mandatory cloud. No collaboration theater. Respect for past work.
 
 ## Optional AI
 
-In **Settings**:
+Offline split is the product. LLM assist is optional, for messy cuts only.
 
-| Field | Example |
-|-------|---------|
-| Base URL | `http://localhost:11434/v1` (Ollama) or your Grok/OpenAI-compatible endpoint |
-| Model | `llama3.2` or provider model id |
-| API key | if required |
+In **Settings → Optional AI**, pick a provider:
 
-Uses: multi-select → **AI structure…**, and optional AI-assisted chunking on import.
+| Provider | Drafts leave the machine? | Setup |
+|----------|---------------------------|--------|
+| **Off** | No | Default |
+| **Ollama** | No | [ollama.com](https://ollama.com) + `ollama pull llama3.1` (8B+; not llama3.2 3B) |
+| **xAI Grok** | Yes | Settings has numbered steps: key from [console.x.ai](https://console.x.ai), copy `.env.example` → `.env`, restart, Test. Or paste the key in Settings. Privacy box required. |
+| **Custom** | Depends | OpenAI-compatible URL from the browser (not proxied) |
+
+**xAI privacy (API, not grok.com):** they do not train on API inputs/outputs unless you opt in. Default ~30-day encrypted logs for abuse audit. [Zero Data Retention](https://docs.x.ai/developers/faq/security) is a team Console toggle — it stops disk retention; the text still goes to xAI.
+
+`./start.sh` runs a localhost proxy so the xAI key can stay in `.env` instead of IndexedDB. Never commit `.env`.
+
+Uses: optional AI-assisted fragmenting on import / re-split, and multi-select → **AI structure…**.
 
 ---
 
@@ -147,7 +153,7 @@ reliquary/
   LICENSE
   README.md
   CONTRIBUTING.md
-  start.sh · start.bat
+  start.sh · start.bat · serve.py · .env.example
   samples/messy-draft.md
   src/
     main.js · app.js · styles.css
@@ -158,7 +164,7 @@ reliquary/
     lib/export.js
 ```
 
-**Pipeline:** ingestion → chunking → classification → interface.
+**Pipeline:** ingestion → fragmenting → optional labels → interface.
 
 ---
 

@@ -1,5 +1,5 @@
 /* Reliquary service worker — shell cache for installability + offline reopen */
-const CACHE = 'reliquary-shell-v7';
+const CACHE = 'reliquary-shell-v12';
 
 const PRECACHE = [
   './',
@@ -59,6 +59,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  // Never cache the LLM proxy
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(req));
+    return;
+  }
 
   event.respondWith(networkFirst(req));
 });

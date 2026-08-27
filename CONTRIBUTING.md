@@ -13,7 +13,7 @@ Thank you for helping writers excavate their own past work.
 
 ```bash
 cd reliquary
-python3 -m http.server 8780   # or: python -m http.server 8780 on Windows
+python3 serve.py   # localhost static + optional LLM proxy
 ```
 
 Open http://127.0.0.1:8780
@@ -25,7 +25,7 @@ Open http://127.0.0.1:8780
 | Ingestion | `src/ingest/parse.js` |
 | Chunking | `src/chunk/engine.js` |
 | Storage | `src/storage/db.js` |
-| AI (optional) | `src/ai/client.js` |
+| AI (optional) | `src/ai/client.js` + `serve.py` (`/api/llm/*`) |
 | UI | `src/app.js`, `src/styles.css` |
 
 ## Pull requests

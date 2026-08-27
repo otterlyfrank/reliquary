@@ -33,19 +33,22 @@ const DEFAULT_LABELS = [
 export const DEFAULT_SETTINGS = {
   theme: 'dark',
   // Legacy size knob (kept for older vaults; engine maps to size presets)
-  chunkMode: 'balanced', // conservative | balanced | atomic
+  chunkMode: 'atomic', // conservative | balanced | atomic — mirrors fine fragments
   // Offline fine-tuning (LLM-free path)
   chunkUnit: 'hybrid', // sentence | paragraph | section | page | hybrid
-  chunkSizePreset: 'medium', // fine | medium | coarse | custom
-  chunkMinChars: 40,
-  chunkMaxChars: 1800,
+  chunkSizePreset: 'fine', // fine | medium | coarse | custom — fragments, not whole files
+  chunkMinChars: 12,
+  chunkMaxChars: 420,
   chunkPageWords: 300,
   respectPageBreaks: true,
-  keepDialogueTogether: true,
+  keepDialogueTogether: false, // rip dialogue onto its own cards
+  settingsVersion: 3,
   useAiChunk: false,
+  llmProvider: 'off', // off | ollama | xai | custom
   llmBaseUrl: '',
   llmApiKey: '',
-  llmModel: 'llama3.2',
+  llmModel: '',
+  llmPrivacyAck: false, // required before xAI calls
   labels: DEFAULT_LABELS,
   /** Leave empty to hide GitHub Sponsors */
   supportGithubSponsors: '',
@@ -305,6 +308,15 @@ export async function deletePiece(id) {
   await reqP(t.objectStore('pieces').delete(id));
 }
 
+export async function deletePiecesByDocument(documentId) {
+  const all = await listPieces({ documentId });
+  if (!all.length) return 0;
+  const t = await tx(['pieces'], 'readwrite');
+  const store = t.objectStore('pieces');
+  await Promise.all(all.map((p) => reqP(store.delete(p.id))));
+  return all.length;
+}
+
 export async function putPiecesBulk(pieces) {
   const t = await tx(['pieces'], 'readwrite');
   const store = t.objectStore('pieces');
@@ -474,6 +486,8 @@ export async function getSettings() {
   const rows = await reqP(t.objectStore('settings').getAll());
   const map = { ...DEFAULT_SETTINGS };
   for (const row of rows) map[row.key] = row.value;
+  const storedVersion = rows.find((r) => r.key === 'settingsVersion');
+  const ver = Number(storedVersion ? storedVersion.value : 0);
   if (!Array.isArray(map.labels) || !map.labels.length) map.labels = [...DEFAULT_LABELS];
   // Normalize legacy generic sponsor placeholders
   const gh = String(map.supportGithubSponsors || '').trim();
@@ -483,6 +497,36 @@ export async function getSettings() {
   const kofi = String(map.supportKofi || '').trim();
   if (!kofi || kofi === 'https://ko-fi.com' || kofi === 'https://ko-fi.com/') {
     map.supportKofi = DEFAULT_SETTINGS.supportKofi;
+  }
+  // v2: Reliquary is a fragment desk, not a whole-file filing cabinet.
+  if (ver < 2) {
+    map.keepDialogueTogether = false;
+    if (!map.chunkUnit || map.chunkUnit === 'hybrid') {
+      if (!map.chunkSizePreset || map.chunkSizePreset === 'medium') {
+        map.chunkSizePreset = 'fine';
+      }
+    }
+    map.chunkMode = map.chunkSizePreset === 'fine' ? 'atomic' : map.chunkMode;
+  }
+  // v3: first-class Ollama / xAI (infer from an old URL if needed)
+  if (ver < 3) {
+    const storedProvider = rows.find((r) => r.key === 'llmProvider');
+    if (!storedProvider) {
+      const url = String(map.llmBaseUrl || '').toLowerCase();
+      if (!url) map.llmProvider = 'off';
+      else if (url.includes('api.x.ai')) map.llmProvider = 'xai';
+      else if (url.includes('11434') || url.includes('ollama')) map.llmProvider = 'ollama';
+      else map.llmProvider = 'custom';
+    }
+    map.settingsVersion = 3;
+    setSettings({
+      keepDialogueTogether: map.keepDialogueTogether === true,
+      chunkSizePreset: map.chunkSizePreset,
+      chunkUnit: map.chunkUnit || 'hybrid',
+      chunkMode: map.chunkMode,
+      llmProvider: map.llmProvider,
+      settingsVersion: 3,
+    }).catch(() => {});
   }
   return map;
 }

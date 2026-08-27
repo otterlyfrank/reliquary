@@ -1,6 +1,6 @@
 /**
  * File ingestion — extract plain text from writer formats.
- * Supports: .txt .md .markdown .docx .odt .doc .rtf (best-effort for legacy)
+ * Supports: .txt .md .markdown .docx .odt .doc .rtf .html .pdf (text PDFs)
  */
 
 export const SUPPORTED_EXTENSIONS = [
@@ -12,6 +12,10 @@ export const SUPPORTED_EXTENSIONS = [
   '.odt',
   '.doc',
   '.rtf',
+  '.html',
+  '.htm',
+  '.xhtml',
+  '.pdf',
 ];
 
 const EXT_KIND = {
@@ -23,6 +27,10 @@ const EXT_KIND = {
   odt: 'odt',
   doc: 'doc',
   rtf: 'rtf',
+  html: 'html',
+  htm: 'html',
+  xhtml: 'html',
+  pdf: 'pdf',
 };
 
 /** @type {Worker | null} */
@@ -87,7 +95,8 @@ function parseTextInWorker(file, kind, buf) {
  * @returns {Promise<{ name: string, kind: string, text: string, warnings: string[] }>}
  */
 export async function parseFile(file) {
-  const name = file.name || 'untitled';
+  const name =
+    file.reliquaryPath || file.webkitRelativePath || file.name || 'untitled';
   const ext = extOf(name);
   const warnings = [];
   const buf = await file.arrayBuffer();
@@ -129,6 +138,11 @@ export async function parseFile(file) {
     } else if (kind === 'rtf') {
       text = parseRtf(decodeText(workBuf));
       warnings.push('RTF import is simplified. Prefer .docx or .md when you can.');
+    } else if (kind === 'html') {
+      text = parseHtml(decodeText(workBuf));
+    } else if (kind === 'pdf') {
+      text = await parsePdf(workBuf);
+      warnings.push('PDF text is best-effort. Scans (image pages) will be empty — export .docx or .txt.');
     } else {
       text = decodeText(workBuf);
       if (looksBinary(text)) {
@@ -172,6 +186,8 @@ function sniffKind(ext, buf) {
   }
   const head = decodeText(buf.slice(0, Math.min(buf.byteLength, 256)));
   if (head.trimStart().startsWith('{\\rtf')) return 'rtf';
+  if (head.trimStart().startsWith('%PDF')) return 'pdf';
+  if (/<[!]DOCTYPE html/i.test(head) || /<html[\s>]/i.test(head)) return 'html';
   return null;
 }
 
@@ -461,6 +477,105 @@ function parseRtf(rtf) {
   return s.trim();
 }
 
+function parseHtml(html) {
+  let s = String(html || '');
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+  s = s.replace(/<\/(p|div|h[1-6]|li|tr|blockquote|article|section)>/gi, '\n\n');
+  s = s.replace(/<[^>]+>/g, '');
+  s = decodeXml(s);
+  return normalizeExtracted(s);
+}
+
+function pdfUnescape(s) {
+  return String(s || '')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '')
+    .replace(/\\t/g, '\t')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\(\d{1,3})/g, (_, n) => String.fromCharCode(parseInt(n, 8)));
+}
+
+function pdfStringsFromContent(content) {
+  const out = [];
+  const reTj = /\(((?:\\.|[^\\)])*)\)\s*T[jJ]/g;
+  let m;
+  while ((m = reTj.exec(content))) {
+    const t = pdfUnescape(m[1]).trim();
+    if (t) out.push(t);
+  }
+  const reTJ = /\[(.*?)\]\s*TJ/gs;
+  while ((m = reTJ.exec(content))) {
+    const inner = m[1];
+    const bits = [...inner.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((x) => pdfUnescape(x[1]));
+    const line = bits.join('').trim();
+    if (line) out.push(line);
+  }
+  return out.join(' ');
+}
+
+async function inflatePdfStream(data) {
+  if (typeof DecompressionStream === 'undefined') return null;
+  for (const codec of ['deflate', 'deflate-raw']) {
+    try {
+      const ds = new DecompressionStream(codec);
+      const ab = await new Response(new Blob([data]).stream().pipeThrough(ds)).arrayBuffer();
+      return new Uint8Array(ab);
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+async function parsePdf(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const latin = new TextDecoder('latin1').decode(bytes);
+  if (!latin.startsWith('%PDF')) {
+    throw new Error('Not a PDF.');
+  }
+  const parts = [];
+  parts.push(pdfStringsFromContent(latin));
+  let idx = 0;
+  while (idx < latin.length) {
+    const start = latin.indexOf('stream', idx);
+    if (start < 0) break;
+    const afterKw = start + 6;
+    let dataStart = afterKw;
+    if (latin[dataStart] === '\r') dataStart += 1;
+    if (latin[dataStart] === '\n') dataStart += 1;
+    const end = latin.indexOf('endstream', dataStart);
+    if (end < 0) break;
+    const header = latin.slice(Math.max(0, start - 500), start);
+    let payload = bytes.subarray(dataStart, end);
+    if (payload.length >= 1 && payload[payload.length - 1] === 10) {
+      payload = payload.subarray(0, payload.length - 1);
+    }
+    if (payload.length >= 1 && payload[payload.length - 1] === 13) {
+      payload = payload.subarray(0, payload.length - 1);
+    }
+    let raw = payload;
+    if (/\/FlateDecode/.test(header)) {
+      const inf = await inflatePdfStream(payload);
+      if (inf) raw = inf;
+    }
+    const content = new TextDecoder('latin1').decode(raw);
+    const extracted = pdfStringsFromContent(content);
+    if (extracted.trim()) parts.push(extracted);
+    idx = end + 9;
+  }
+  const text = normalizeExtracted(parts.filter(Boolean).join('\n\n'));
+  if (text.length < 40) {
+    throw new Error(
+      'This PDF has little extractable text (likely a scan). Export from Word or Preview as .docx / .txt.'
+    );
+  }
+  return text;
+}
+
 function decodeXml(s) {
   return s
     .replace(/&lt;/g, '<')
@@ -470,13 +585,32 @@ function decodeXml(s) {
     .replace(/&apos;/g, "'");
 }
 
+function fileLabel(file) {
+  return file.reliquaryPath || file.webkitRelativePath || file.name || '';
+}
+
+export function isJunkDraftName(name) {
+  const base = String(name || '')
+    .split(/[/\\]/)
+    .pop() || '';
+  return (
+    /^~\$/.test(base) ||
+    /^\./.test(base) ||
+    /^(thumbs\.db|desktop\.ini)$/i.test(base)
+  );
+}
+
 export function isSupportedFile(file) {
-  const n = (file.name || '').toLowerCase();
+  const n = fileLabel(file).toLowerCase();
+  if (isJunkDraftName(n)) return false;
   if (SUPPORTED_EXTENSIONS.some((ext) => n.endsWith(ext))) return true;
   const t = (file.type || '').toLowerCase();
   return (
     t === 'text/plain' ||
     t === 'text/markdown' ||
+    t === 'text/html' ||
+    t === 'application/xhtml+xml' ||
+    t === 'application/pdf' ||
     t === 'text/rtf' ||
     t === 'application/rtf' ||
     t === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
@@ -485,7 +619,20 @@ export function isSupportedFile(file) {
   );
 }
 
+/** Why we did not pick up a file while walking a folder. null = import it. */
+export function skipReason(file) {
+  const n = fileLabel(file).toLowerCase();
+  const base = n.split('/').pop() || '';
+  if (isJunkDraftName(base) || isJunkDraftName(n)) return 'junk';
+  if (isSupportedFile(file)) return null;
+  if (n.endsWith('.pdf')) return 'pdf';
+  if (/\.(pages|key|numbers)$/.test(n)) return 'pages';
+  if (/\.(png|jpe?g|gif|webp|heic|tiff?|bmp|svg)$/.test(n)) return 'image';
+  if (/\.(zip|rar|7z)$/.test(n)) return 'archive';
+  return 'other';
+}
+
 /** Human-facing format list for UI. */
 export function formatHelpLine() {
-  return 'Word (.docx), text, Markdown, OpenDocument (.odt), RTF · old .doc is best-effort';
+  return 'Word (.docx), text, Markdown, HTML, PDF text (not scans), OpenDocument (.odt), RTF · old .doc is best-effort';
 }

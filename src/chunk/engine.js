@@ -31,7 +31,7 @@ export const CHUNK_UNITS = [
   {
     id: 'hybrid',
     label: 'Smart hybrid',
-    hint: 'Headings + paragraphs + size limits (good default)',
+    hint: 'Cut into reorderable cards — dialogue, idea dumps, headings, size limits',
   },
 ];
 
@@ -39,7 +39,7 @@ export const CHUNK_SIZE_PRESETS = [
   {
     id: 'fine',
     label: 'Fine — short pieces',
-    hint: 'Easier to scan; more cards',
+    hint: 'Default — short fragments you can shuffle',
     minChars: 12,
     maxChars: 420,
     pageWords: 120,
@@ -85,7 +85,7 @@ export function resolveChunkOptions(settings = {}, overrides = {}) {
     unit = legacyModeToUnit(merged.chunkMode);
   }
   if (!sizePreset || !CHUNK_SIZE_PRESETS.some((p) => p.id === sizePreset)) {
-    sizePreset = legacyModeToSize(merged.chunkMode);
+    sizePreset = merged.chunkMode ? legacyModeToSize(merged.chunkMode) : 'fine';
   }
 
   const preset =
@@ -111,7 +111,8 @@ export function resolveChunkOptions(settings = {}, overrides = {}) {
   pageWords = Math.max(40, Math.min(2000, Math.floor(pageWords)));
 
   const respectPageBreaks = merged.respectPageBreaks !== false;
-  const keepDialogueTogether = merged.keepDialogueTogether !== false;
+  // Default: rip dialogue onto its own cards (fragment desk, not scenes)
+  const keepDialogueTogether = merged.keepDialogueTogether === true;
 
   return {
     unit,
@@ -205,7 +206,7 @@ export function chunkDocument(text, optsOrSettings = {}) {
       maxChars: optsOrSettings.maxChars ?? opts.maxChars,
       pageWords: optsOrSettings.pageWords ?? opts.pageWords,
       respectPageBreaks: optsOrSettings.respectPageBreaks !== false,
-      keepDialogueTogether: optsOrSettings.keepDialogueTogether !== false,
+      keepDialogueTogether: optsOrSettings.keepDialogueTogether === true,
       sourceName: optsOrSettings.sourceName || opts.sourceName,
     });
   }
@@ -218,38 +219,33 @@ export function chunkDocument(text, optsOrSettings = {}) {
   switch (opts.unit) {
     case 'sentence':
       blocks = splitAllSentences(cleaned, opts);
+      blocks = packSmallRuns(blocks, opts);
       break;
     case 'paragraph':
       blocks = splitParagraphs(cleaned, opts);
+      blocks = applyFragmentCuts(blocks, opts, cleaned);
+      blocks = mergeTiny(blocks, opts.minChars, opts);
+      blocks = splitOversized(blocks, opts);
       break;
     case 'section':
       blocks = splitSections(cleaned, opts);
+      blocks = mergeTiny(blocks, opts.minChars);
+      blocks = splitOversized(blocks, opts);
       break;
     case 'page':
       blocks = splitPages(cleaned, opts);
+      blocks = mergeTiny(blocks, Math.min(opts.minChars, 60));
       break;
     case 'hybrid':
     default:
       blocks = structuralSplit(cleaned, opts);
-      blocks = mergeTiny(blocks, opts.minChars);
+      blocks = applyFragmentCuts(blocks, opts, cleaned);
+      blocks = mergeTiny(blocks, opts.minChars, opts);
       blocks = splitOversized(blocks, opts);
       break;
   }
 
-  // Shared post-pass for units that didn't already size-cap
-  if (opts.unit === 'paragraph' || opts.unit === 'section') {
-    blocks = mergeTiny(blocks, opts.minChars);
-    blocks = splitOversized(blocks, opts);
-  }
-  if (opts.unit === 'page') {
-    blocks = mergeTiny(blocks, Math.min(opts.minChars, 60));
-  }
-  if (opts.unit === 'sentence') {
-    // optionally pack short sentences up to minChars (dialogue-friendly)
-    blocks = packSmallRuns(blocks, opts);
-  }
-
-  blocks = blocks.map((b) => b.trim()).filter((b) => b.length >= 8);
+  blocks = blocks.map((b) => b.trim()).filter((b) => b.length >= 8 && !isJunkPiece(b));
 
   return blocks.map((block) => {
     const labels = heuristicLabels(block);
@@ -435,16 +431,19 @@ function structuralSplit(text, opts) {
   for (const part of parts) {
     const p = part.replace(/^§§§\n?/, '').trim();
     if (!p) continue;
-    if (/^#{1,6}\s/.test(p) || /^[A-Z][^\n]{0,80}\n[=-]{3,}\s*$/m.test(p)) {
+    const isHead = /^#{1,6}\s/.test(p) || /^[A-Z][^\n]{0,80}\n[=-]{3,}\s*$/m.test(p);
+    if (isHead) {
       if (buf) chunks.push(buf);
       buf = p;
       continue;
     }
     if (!buf) {
       buf = p;
-    } else if (buf.length < Math.min(280, opts.maxChars * 0.25) && p.length < 500) {
+    } else if (isHeadingBlock(buf) && buf.length < 90 && !isHardFragment(p)) {
+      // Keep a heading with the first paragraph under it
       buf = buf + '\n\n' + p;
     } else {
+      // Blank-line paragraphs stay separate — this is a fragment desk
       chunks.push(buf);
       buf = p;
     }
@@ -453,13 +452,208 @@ function structuralSplit(text, opts) {
   return chunks.length ? chunks : [text];
 }
 
-function mergeTiny(blocks, minKeep) {
+function isHeadingBlock(t) {
+  const s = String(t || '').trim();
+  return /^#{1,6}\s+\S/.test(s) || /^[A-Z][^\n]{0,80}\n[=-]{3,}\s*$/m.test(s);
+}
+
+function applyFragmentCuts(blocks, opts, fullText = '') {
+  let out = blocks.flatMap((b) => splitListAndIdeaLines(b));
+  if (!opts.keepDialogueTogether) {
+    out = out.flatMap((b) => splitDialogueRuns(b));
+    out = out.flatMap((b) => splitInlineDialogue(b));
+  }
+  const dump = isIdeaDump(fullText || out.join('\n\n'), opts.sourceName);
+  out = out.flatMap((b) => (dump || looksLikeLooseNotes(b) ? explodeIdeaDump(b) : [b]));
+  return out;
+}
+
+const SAID_VERBS =
+  'said|says|asked|replied|whispered|muttered|answered|called|shouted|cried|added|went on';
+
+/** Peel quoted speech (and its he-said) out of a mixed narration paragraph. */
+function splitInlineDialogue(text) {
+  const t = String(text || '');
+  if (!/["“«]/.test(t)) return [t];
+  const re = /["“«][^"”»\n]{0,1200}["”»]/g;
+  const spans = [];
+  let m;
+  while ((m = re.exec(t))) {
+    let start = m.index;
+    let end = m.index + m[0].length;
+    const before = t.slice(0, start);
+    const lead = before.match(
+      new RegExp(
+        `((?:[A-Z][a-zA-Z]+|He|She|They|I)\\s+(?:${SAID_VERBS})[,:]?\\s*)$`
+      )
+    );
+    if (lead) start -= lead[1] ? lead[1].length : lead[0].length;
+    const after = t.slice(end);
+    // Only glue classic beat tags (" she asked.") — not the next sentence (" I asked why.")
+    const attr = after.match(
+      new RegExp(
+        `^(,\\s*|\\s+)(?:he|she|they)\\s+(?:${SAID_VERBS})\\b[^.!?\\n]{0,50}[.!?]?`
+      )
+    );
+    if (attr) end += attr[0].length;
+    const slice = t.slice(start, end).trim();
+    if (slice.length >= 3) spans.push({ start, end, text: slice });
+  }
+  if (!spans.length) return [t];
+  if (spans.length === 1 && spans[0].start <= 2 && t.slice(spans[0].end).trim().length < 8) {
+    return [t.trim()];
+  }
+  const out = [];
+  let cursor = 0;
+  for (const s of spans) {
+    if (s.start < cursor) continue;
+    const prior = t.slice(cursor, s.start).trim();
+    if (prior.length >= 8) out.push(prior);
+    out.push(s.text);
+    cursor = s.end;
+  }
+  const tail = t.slice(cursor).trim();
+  if (tail.length >= 8) out.push(tail);
+  return out.length ? out : [t];
+}
+
+function looksLikeListItem(t) {
+  return /^\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s+\S/.test(String(t).trim());
+}
+
+function looksLikeIdeaCue(t) {
+  return /^(?:ideas?|another(?:\s+one|\s+idea)?|also|note(?:\s+to\s+self)?|todo|tbd|fragment|random|unrelated|plot:|what if)\b/i.test(
+    String(t).trim()
+  );
+}
+
+function isHardFragment(t) {
+  const s = String(t || '').trim();
+  if (!s) return false;
+  return looksLikeListItem(s) || looksLikeIdeaCue(s) || looksLikeDialogue(s);
+}
+
+function isIdeaDump(text, sourceName = '') {
+  if (/\bideas?\b/i.test(sourceName)) return true;
+  const raw = String(text || '');
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length >= 6) {
+    const listy = lines.filter((l) => looksLikeListItem(l) || looksLikeIdeaCue(l)).length;
+    if (listy / lines.length >= 0.35) return true;
+  }
+  const sents = tokenizeSentences(raw);
+  const cues = (
+    raw.match(
+      /\b(another|also|what if|idea:|todo|tbd|note to self|random thought|unrelated|plot:)\b/gi
+    ) || []
+  ).length;
+  if (sents.length >= 5 && cues >= 2) return true;
+  const paras = raw
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (paras.length >= 6) {
+    const short = paras.filter((p) => p.length < 160).length;
+    if (short / paras.length >= 0.7 && cues >= 1) return true;
+  }
+  return false;
+}
+
+function looksLikeLooseNotes(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (looksLikeIdeaCue(t) || looksLikeListItem(t)) return true;
+  const sents = tokenizeSentences(t);
+  const cues = (
+    t.match(
+      /\b(another|also|what if|idea:|todo|tbd|note to self|random thought|unrelated|plot:|fragment:)\b/gi
+    ) || []
+  ).length;
+  if (sents.length >= 2 && cues >= 2) return true;
+  if (sents.length >= 4) {
+    const short = sents.filter((s) => s.length < 100).length;
+    const narrative = (t.match(/\b(he|she|they|I)\s+[a-z]+ed\b/gi) || []).length;
+    if (short / sents.length >= 0.75 && narrative < 2) return true;
+  }
+  return false;
+}
+
+function splitListAndIdeaLines(text) {
+  const lines = String(text).split('\n');
+  const blocks = [];
+  let buf = [];
+  const flush = () => {
+    const b = buf.join('\n').trim();
+    if (b) blocks.push(b);
+    buf = [];
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      flush();
+      continue;
+    }
+    if (looksLikeListItem(t) || looksLikeIdeaCue(t)) {
+      flush();
+      blocks.push(t);
+      continue;
+    }
+    buf.push(line);
+  }
+  flush();
+  return blocks.length ? blocks : [text];
+}
+
+function splitDialogueRuns(text) {
+  const lines = String(text).split('\n');
+  const out = [];
+  let buf = [];
+  let mode = null;
+  const flush = () => {
+    const b = buf.join('\n').trim();
+    if (b) out.push(b);
+    buf = [];
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      flush();
+      mode = null;
+      continue;
+    }
+    const m = looksLikeDialogue(t) ? 'dlg' : 'prose';
+    if (mode && m !== mode) flush();
+    mode = m;
+    buf.push(line);
+  }
+  flush();
+  return out.length ? out : [text];
+}
+
+function explodeIdeaDump(block) {
+  const lines = String(block)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length >= 3 && lines.filter((l) => l.length < 180).length / lines.length >= 0.8) {
+    return lines.filter((l) => l.length >= 8);
+  }
+  const sents = tokenizeSentences(block);
+  if (sents.length < 2) return [block];
+  return sents.map((s) => s.trim()).filter((s) => s.length >= 8);
+}
+
+function mergeTiny(blocks, minKeep, opts = {}) {
   const out = [];
   let buf = '';
   for (const b of blocks) {
-    if (b.length < minKeep && buf) {
+    const hard = isHardFragment(b) || isHardFragment(buf);
+    if (b.length < minKeep && buf && !hard) {
       buf = buf + '\n\n' + b;
-    } else if (b.length < minKeep) {
+    } else if (b.length < minKeep && !buf && !hard) {
       buf = b;
     } else {
       if (buf) {
@@ -527,6 +721,19 @@ function splitSentencesToMax(text, max) {
   return out.filter(Boolean);
 }
 
+/** Drop page numbers, leader dots, and binary leftovers — not writing. */
+export function isJunkPiece(text) {
+  const t = String(text || '').trim();
+  if (t.length < 8) return true;
+  const letters = (t.match(/[A-Za-zÀ-ÿ]/g) || []).length;
+  if (letters < 6 && !looksLikeDialogue(t)) return true;
+  if (letters / t.length < 0.28) return true;
+  if (/^(page\s*)?\d+(\s*(of|\/)\s*\d+)?$/i.test(t)) return true;
+  if (/^[\d\s.\-–—•·*_/=]+$/.test(t)) return true;
+  if (/^\.{5,}/.test(t) || /_{8,}/.test(t)) return true;
+  return false;
+}
+
 /**
  * Lightweight “semantic” labels without network.
  */
@@ -535,8 +742,12 @@ export function heuristicLabels(text) {
   const labels = [];
   const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  if (/^["“«]/.test(t) || /["”]\s*$/.test(t) || /^(said|says|asked|replied)\b/im.test(t)) {
-    if (lines.length <= 8 && t.length < 800) labels.push('Dialogue');
+  // Stickers only when the signal is loud. Empty is fine — the writer files the cards.
+  if (
+    looksLikeDialogue(t) ||
+    ((t.includes('"') || t.includes('“')) && t.length < 800 && lines.length <= 8)
+  ) {
+    labels.push('Dialogue');
   }
   if (lines.length >= 3 && lines.every((l) => l.length < 90) && t.length < 900) {
     const short = lines.filter((l) => l.length < 60).length;
@@ -549,27 +760,11 @@ export function heuristicLabels(text) {
   ) {
     labels.push('Philosophical Fragment');
   }
-  if (
-    /\b(he|she|they|character|protagonist|her eyes|his voice|named [A-Z])\b/i.test(t) &&
-    t.length < 1500
-  ) {
-    labels.push('Character');
-  }
-  if (/\b(city|town|room|street|forest|house|river|place called)\b/i.test(t)) {
-    labels.push('Location');
-  }
-  if (/\b(plot|then |suddenly|chapter|later that|the plan)\b/i.test(t)) {
-    labels.push('Plot Seed');
-  }
-  if (t.length < 160 && !/[.!?]\s+[A-Z]/.test(t)) {
-    labels.push('Phrase/Image');
-  }
   if (/\b(TODO|TBD|xxx|\?\?\?|finish this|incomplete|rough)\b/i.test(t) || /…\s*$/.test(t)) {
     labels.push('Incomplete');
   }
-  if (!labels.length) {
-    if (t.length > 900) labels.push('Scene');
-    else labels.push('Concept');
+  if (t.length < 70 && !/[.!?]\s/.test(t) && /[,/—–]/.test(t)) {
+    labels.push('Phrase/Image');
   }
   return [...new Set(labels)];
 }
@@ -582,13 +777,20 @@ export function buildAiChunkPrompt(text, modeOrOpts) {
     typeof modeOrOpts === 'string'
       ? modeOrOpts
       : describeChunkOptions(modeOrOpts || {});
-  return `You are helping excavate a writer's draft into discrete usable pieces.
-Chunking preference: ${desc}.
-Split the source into JSON array of objects: { "text": "...", "labels": ["..."], "isLarge": boolean }.
-Rules: preserve original wording; do not invent content; prefer natural idea boundaries; label from: Concept, Character, Location, Plot Seed, Philosophical Fragment, Dialogue, Poetry, Phrase/Image, Incomplete, Scene, Essay Seed.
+  return `You split a writer's draft into FRAGMENTS for a card desk they will reorder.
+This is not classification of the whole file. Never return one object for the entire source.
+Preference: ${desc}.
+
+Rules:
+- Each unrelated idea = its own card (ideas dumps, bullets, "another thought…").
+- Quoted dialogue = its own card(s), separate from narration. Rip it out of a story if it stands alone.
+- Preserve original wording. Do not rewrite, summarize, or invent.
+- Prefer many small cards over one large card. Typical card: 1–8 sentences.
+- labels optional from: Concept, Character, Location, Plot Seed, Philosophical Fragment, Dialogue, Poetry, Phrase/Image, Incomplete, Scene, Essay Seed.
+
+Return JSON array only: [{ "text": "...", "labels": ["..."] }, ...]
 Source:
 ---
-${text.slice(0, 14000)}
----
-Return JSON array only.`;
+${text.slice(0, 12000)}
+---`;
 }

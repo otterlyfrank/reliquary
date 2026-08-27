@@ -141,6 +141,8 @@ In **Settings → Optional AI**, pick a provider:
 
 `./start.sh` runs a localhost proxy so the xAI key can stay in `.env` instead of IndexedDB. Never commit `.env`.
 
+The Dock/PWA is **not** a copy of GitHub. After a push, run `./start.sh` (or the suite `update-apps.sh`) so this machine pulls and the installed window reloads. The sidebar shows `v… · git` so you can confirm.
+
 Uses: optional AI-assisted fragmenting on import / re-split, and multi-select → **AI structure…**.
 
 ---

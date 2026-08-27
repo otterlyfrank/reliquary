@@ -10,6 +10,61 @@ const PWA_EVENT = 'reliquary-pwa-change';
 
 const INSTALL_ICON = `<svg class="pwa-install-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zm-7 14h14v2H5v-2z"/></svg>`;
 
+let versionLabel = '';
+let versionFetch = null;
+
+function registerFreshServiceWorker(url) {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker
+    .register(url, { updateViaCache: 'none' })
+    .then((reg) => {
+      const ping = () => reg.update().catch(() => {});
+      ping();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') ping();
+      });
+      window.addEventListener('focus', ping);
+    })
+    .catch((err) => {
+      console.warn('[Reliquary] service worker registration failed', err);
+    });
+
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+}
+
+export function paintAppVersion() {
+  const apply = () => {
+    if (!versionLabel) return;
+    document.querySelectorAll('[data-app-version]').forEach((el) => {
+      el.textContent = versionLabel;
+    });
+  };
+  apply();
+  if (versionLabel || versionFetch) return;
+  const take = (d) => {
+    const v = d && d.version;
+    versionLabel = [v && `v${String(v).replace(/^v/i, '')}`, d && d.git].filter(Boolean).join(' · ');
+    apply();
+  };
+  versionFetch = fetch('/api/version', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then(take)
+    .catch(() =>
+      fetch('/health', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then(take)
+    )
+    .catch(() => {
+      versionFetch = null;
+    });
+}
+
 export function isStandalone() {
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
@@ -39,10 +94,9 @@ export function initPwa() {
 
   if ('serviceWorker' in navigator && !swRegistered) {
     swRegistered = true;
-    navigator.serviceWorker.register('./sw.js').catch((err) => {
-      console.warn('[Reliquary] service worker registration failed', err);
-    });
+    registerFreshServiceWorker('./sw.js');
   }
+  paintAppVersion();
 }
 
 export async function promptInstall() {
@@ -67,9 +121,10 @@ export function installUiHtml(mode = 'compact') {
         <div class="piece-card pwa-card" style="max-width:40rem;margin-top:1rem" id="pwa-install-card">
           <h3 style="font-family:var(--serif);margin:0 0 0.35rem">Installed app</h3>
           <p class="muted">Reliquary is running as a standalone window. Your vault stays in this browser profile’s IndexedDB.</p>
+          <p class="dim" data-app-version style="margin:0.5rem 0 0"></p>
         </div>`;
     }
-    return `<p class="pwa-status dim">Installed · standalone</p>`;
+    return `<p class="pwa-status dim">Installed · standalone · <span data-app-version></span></p>`;
   }
 
   const can = canPromptInstall();
@@ -138,4 +193,5 @@ export function wireInstallButtons(root = document) {
       }
     };
   });
+  paintAppVersion();
 }

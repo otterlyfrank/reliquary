@@ -34,7 +34,11 @@ cd ~/Desktop/OtterlyEnterprises/Software/reliquary
 4. **Install as app** (see above), then click **Whole folder** and pick the folder where all your drafts live (subfolders are included).
 
 To quit the small server later: click the Terminal window and press **Control+C**.  
-(Once installed as an app, you still need that tiny server running for a fully local open — or a future hosted URL.)
+On a Mac, `./start.sh` now leaves Reliquary running in the background (same idea as Otterly Leads). The Dock icon only works while that server is up. To keep it up after login:
+
+```bash
+~/Desktop/OtterlyEnterprises/Software/reliquary/macos/install-launch-agent.sh
+```
 
 ---
 

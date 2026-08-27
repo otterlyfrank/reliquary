@@ -13,3 +13,5 @@ dist/
 *.AppImage
 *.msi
 *.exe
+
+macos/*.app

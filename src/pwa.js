@@ -20,7 +20,8 @@ function registerFreshServiceWorker(url) {
     .register(url, { updateViaCache: 'none' })
     .then((reg) => {
       const ping = () => reg.update().catch(() => {});
-      ping();
+      // Don't fight first paint — check after the vault is on screen.
+      setTimeout(ping, 2500);
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') ping();
       });
@@ -33,6 +34,12 @@ function registerFreshServiceWorker(url) {
   let reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController || reloading) return;
+    try {
+      if (sessionStorage.getItem('reliquary-sw-reload') === '1') return;
+      sessionStorage.setItem('reliquary-sw-reload', '1');
+    } catch {
+      /* private mode */
+    }
     reloading = true;
     location.reload();
   });

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.2 — 2026-08-27
+
+### Dock icon actually opens Reliquary
+
+The Brave “installed app” only opens `http://127.0.0.1:8780`. Unlike Otterly Leads, Reliquary’s server used to die when the Terminal window closed, so the Dock icon did nothing.
+
+- `./start.sh` now leaves the server running in the background
+- Optional login LaunchAgent (`macos/install-launch-agent.sh`) keeps :8780 up so the existing Dock icon works
+- `macos/open-reliquary.sh` starts the server if needed, then opens the window
+
 ## 1.4.1 — 2026-08-27
 
 ### Installed app actually updates
